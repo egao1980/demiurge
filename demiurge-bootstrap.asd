@@ -6,5 +6,11 @@
   :description "Demiurge bootstrap KS implementations"
   :depends-on ("demiurge"
                "cl-json-rpc2" "cl-openai" "cl-mcp-sdk" "cl-a2a"
-               "cl-ppcre" "dexador" "yason"
-               "demiurge-bootstrap/main"))
+               "cl-ppcre" "dexador" "yason" "hunchentoot" "lparallel"
+               "demiurge-bootstrap/bootstrap/main"))
+
+(defsystem "demiurge-bootstrap/tests"
+  :class :package-inferred-system
+  :depends-on ("rove" "demiurge-bootstrap"
+               "demiurge-bootstrap/tests/bootstrap-test")
+  :perform (test-op (o c) (symbol-call :rove :run c)))

@@ -5,22 +5,21 @@
   (:import-from #:demiurge/src/blackboard/core
                 #:blackboard #:make-blackboard
                 #:read-section #:write-section #:remove-section #:list-sections
-                #:blackboard-notify-fn)
-  (:import-from #:demiurge/src/blackboard/events
-                #:event-bus #:make-event-bus
-                #:subscribe #:unsubscribe #:emit-event
-                #:run-event-loop #:stop-event-loop
-                #:bb-event #:section-changed #:task-received
-                #:workspace-transitioned #:capability-registered
-                #:timer-tick #:ks-completed #:idle-detected
-                #:make-section-changed #:make-task-received
-                #:make-workspace-transitioned #:make-capability-registered
-                #:make-timer-tick #:make-ks-completed #:make-idle-detected)
+                #:blackboard-notify-fn
+                ;; Watcher/KSAR/Agenda/Scheduler
+                #:watcher #:make-watcher #:watcher-id #:watcher-requires
+                #:watcher-handler #:watcher-priority #:watcher-one-shot-p
+                #:watch #:unwatch #:list-watchers #:get-watcher
+                #:ksar #:make-ksar #:ksar-id #:ksar-watcher-id
+                #:ksar-triggered-key #:ksar-priority #:ksar-context #:ksar-status
+                #:enqueue-ksar #:pop-agenda #:agenda-contents #:agenda-size
+                #:bb-active-count #:bb-max-concurrency
+                #:run-scheduler #:stop-scheduler #:bb-scheduler-running-p)
   (:import-from #:demiurge/src/blackboard/workspace
                 #:workspace #:make-workspace #:workspace-name #:workspace-parent
                 #:workspace-blackboard #:workspace-status #:workspace-metadata
                 #:fork-workspace #:merge-workspace #:discard-workspace
-                #:list-workspaces #:get-workspace)
+                #:list-workspaces #:get-workspace #:find-root-bb)
   ;; Capabilities
   (:import-from #:demiurge/src/capabilities/protocol
                 #:capability #:capability-name #:capability-version
@@ -46,6 +45,8 @@
                 #:version-control-capability)
   (:import-from #:demiurge/src/capabilities/communication
                 #:communication-capability)
+  (:import-from #:demiurge/src/capabilities/web-search
+                #:web-search-capability #:web-search #:fetch-page)
   ;; Knowledge sources
   (:import-from #:demiurge/src/knowledge-source/protocol
                 #:knowledge-source #:ks-name #:ks-version #:ks-priority
@@ -60,15 +61,22 @@
   ;; Controller
   (:import-from #:demiurge/src/controller/main-loop
                 #:run-demiurge #:make-demiurge-instance #:stop-demiurge
-                #:demiurge-ctx-bb #:demiurge-ctx-bus)
+                #:demiurge-ctx-bb)
   (:import-from #:demiurge/src/controller/scheduler
                 #:find-eligible-ks #:schedule-next-ks)
   (:import-from #:demiurge/src/controller/handlers
-                #:handle-new-task #:execute-ks-in-workspace)
+                #:handle-new-task #:execute-ks-in-workspace
+                #:init-kernel #:shutdown-kernel)
   (:import-from #:demiurge/src/controller/agent-loop
                 #:run-task #:run-issue-workflow)
   (:import-from #:demiurge/src/controller/timers
                 #:start-timer #:stop-timer)
+  (:import-from #:demiurge/src/controller/prompts
+                #:build-supervisor-prompt #:build-task-prompt
+                #:build-review-prompt #:build-self-improve-prompt
+                #:build-merge-review-prompt
+                #:*identity-preamble* #:*architecture-section*
+                #:format-capability-catalog #:format-memory-context)
   ;; Introspection
   (:import-from #:demiurge/src/introspection/object-registry
                 #:object-registry #:make-object-registry
@@ -83,7 +91,20 @@
                 #:save-blackboard #:load-blackboard
                 #:snapshot-to-file #:restore-from-file)
   (:import-from #:demiurge/src/persistence/observability
-                #:make-event-logger #:bb-stats #:health-check)
+                #:bb-stats #:health-check)
+  ;; Memory
+  (:import-from #:demiurge/src/persistence/memory
+                #:persistent-memory #:make-persistent-memory
+                #:mem-get #:mem-set #:mem-delete #:mem-keys #:mem-has-p
+                #:mem-append #:mem-get-list #:mem-get-list-last
+                #:mem-increment #:mem-get-number
+                #:mem-save #:mem-load #:with-memory-transaction)
+  (:import-from #:demiurge/src/persistence/memory-keys
+                #:record-ks-execution #:ks-success-rate #:ks-avg-duration
+                #:record-task-result #:recent-tasks
+                #:remember #:recall #:forget
+                #:set-preference #:get-preference
+                #:log-interaction #:recent-interactions)
   ;; Utils
   (:import-from #:demiurge/src/utils/config
                 #:get-config #:load-config)
@@ -92,19 +113,17 @@
            #:blackboard #:make-blackboard
            #:read-section #:write-section #:remove-section #:list-sections
            #:blackboard-notify-fn
-           ;; Events
-           #:event-bus #:make-event-bus
-           #:subscribe #:unsubscribe #:emit-event
-           #:run-event-loop #:stop-event-loop
-           #:bb-event #:section-changed #:task-received
-           #:workspace-transitioned #:capability-registered
-           #:timer-tick #:ks-completed #:idle-detected
-           #:make-task-received #:make-ks-completed
+           ;; Watcher/KSAR/Agenda
+           #:watcher #:watch #:unwatch #:list-watchers #:get-watcher
+           #:ksar #:ksar-id #:ksar-watcher-id #:ksar-context #:ksar-status
+           #:enqueue-ksar #:agenda-contents #:agenda-size
+           #:bb-active-count #:bb-max-concurrency
+           #:run-scheduler #:stop-scheduler
            ;; Workspaces
            #:workspace #:workspace-name #:workspace-status
            #:workspace-blackboard #:workspace-metadata
            #:fork-workspace #:merge-workspace #:discard-workspace
-           #:list-workspaces #:get-workspace
+           #:list-workspaces #:get-workspace #:find-root-bb
            ;; Capabilities
            #:capability #:capability-name #:capability-version
            #:register-capability #:unregister-capability
@@ -115,6 +134,7 @@
            #:compute-capability #:forge-capability
            #:code-intelligence-capability #:code-editing-capability
            #:version-control-capability #:communication-capability
+           #:web-search-capability #:web-search #:fetch-page
            ;; KS
            #:knowledge-source #:ks-name #:ks-version #:ks-priority
            #:ks-precondition #:ks-execute #:ks-postcondition
@@ -125,8 +145,15 @@
            #:run-demiurge #:make-demiurge-instance #:stop-demiurge
            #:find-eligible-ks #:schedule-next-ks
            #:handle-new-task #:execute-ks-in-workspace
+           #:init-kernel #:shutdown-kernel
            #:run-task #:run-issue-workflow
            #:start-timer #:stop-timer
+           ;; Prompts
+           #:build-supervisor-prompt #:build-task-prompt
+           #:build-review-prompt #:build-self-improve-prompt
+           #:build-merge-review-prompt
+           #:*identity-preamble* #:*architecture-section*
+           #:format-capability-catalog #:format-memory-context
            ;; Introspection
            #:object-registry #:make-object-registry
            #:register-object #:lookup-object #:inspectable-p
@@ -135,7 +162,18 @@
            ;; Persistence
            #:save-blackboard #:load-blackboard
            #:snapshot-to-file #:restore-from-file
-           #:make-event-logger #:bb-stats #:health-check
+           #:bb-stats #:health-check
+           ;; Memory
+           #:persistent-memory #:make-persistent-memory
+           #:mem-get #:mem-set #:mem-delete #:mem-keys #:mem-has-p
+           #:mem-append #:mem-get-list #:mem-get-list-last
+           #:mem-increment #:mem-get-number
+           #:mem-save #:mem-load #:with-memory-transaction
+           #:record-ks-execution #:ks-success-rate #:ks-avg-duration
+           #:record-task-result #:recent-tasks
+           #:remember #:recall #:forget
+           #:set-preference #:get-preference
+           #:log-interaction #:recent-interactions
            ;; Config
            #:get-config #:load-config))
 

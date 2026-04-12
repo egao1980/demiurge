@@ -1,0 +1,23 @@
+{
+  "lm_studio_url": "http://192.168.86.67:1234/v1",
+  "lm_studio_api_key": "sk-lm-uV5Q9bi7:oE8O9G6eCiYUnxBKulBZ",
+  "default_model_roles": {
+    "supervisor": "nvidia/nemotron-3-nano-4b",
+    "coder": "qwen/qwen3-coder-next",
+    "fast": "nvidia/nemotron-3-nano-4b",
+    "embeddings": "text-embedding-nomic-embed-text-v1.5"
+  },
+  "container_runtime": "podman",
+  "container_image": "docker.io/library/ubuntu:24.04",
+  "project_root": "~/Projects/lisp/",
+  "memory_path": "~/.config/demiurge/memory.json",
+  "github_token_env": "GITHUB_TOKEN",
+  "swank_port": 4005,
+  "mcp_port": 8080,
+  "a2a_port": 8081,
+  "tick_interval_seconds": 10,
+  "model_discovery_interval_seconds": 60,
+  "idle_threshold_seconds": 120,
+  "llm_read_timeout_seconds": 300,
+  "llm_connect_timeout_seconds": 30
+}

@@ -2,9 +2,6 @@
   (:use #:cl)
   (:import-from #:demiurge/src/blackboard/core
                 #:blackboard #:make-blackboard #:read-section #:write-section)
-  (:import-from #:demiurge/src/blackboard/events
-                #:event-bus #:make-event-bus #:emit-event
-                #:make-task-received #:make-ks-completed)
   (:import-from #:demiurge/src/blackboard/workspace
                 #:fork-workspace #:merge-workspace #:discard-workspace
                 #:workspace-blackboard #:workspace-status #:workspace-name)
@@ -63,7 +60,6 @@
     (write-section ws-bb :issue issue)
     (handler-case
         (progn
-          ;; 1. Analyze
           (let ((llm (get-capability ws-bb :llm-generation)))
             (if llm
                 (let ((analysis (generate-text llm
@@ -75,19 +71,15 @@
                   (write-section ws-bb :analysis analysis)
                   (push :analyzed steps))
                 (push :no-llm steps)))
-          ;; 2. Code changes
           (when (get-capability ws-bb :code-editing)
             (push :edited steps))
-          ;; 3. Test
           (let ((compute (get-capability ws-bb :compute)))
             (when compute
               (let ((test-result (run-command compute "echo 'All tests pass'")))
                 (write-section ws-bb :test-result test-result)
                 (push :tested steps))))
-          ;; 4. VCS
           (when (get-capability ws-bb :version-control)
             (push :committed steps))
-          ;; 5. PR
           (when (and repo (get-capability ws-bb :forge))
             (push :pr-ready steps))
           (write-section ws-bb :steps (nreverse steps))

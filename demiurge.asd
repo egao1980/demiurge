@@ -4,7 +4,7 @@
   :license "MIT"
   :author "egao1980"
   :description "Self-improving blackboard agent - core (implementation-agnostic)"
-  :depends-on ("alexandria" "bordeaux-threads" "local-time" "log4cl"
+  :depends-on ("alexandria" "bordeaux-threads" "closer-mop" "local-time" "log4cl" "yason" "lparallel"
                "demiurge/main")
   :in-order-to ((test-op (test-op "demiurge/tests"))))
 
@@ -17,5 +17,7 @@
                "demiurge/tests/events-test"
                "demiurge/tests/ks-test"
                "demiurge/tests/introspection-test"
-               "demiurge/tests/e2e-test")
+               "demiurge/tests/e2e-test"
+               "demiurge/tests/memory-test"
+               "demiurge/tests/prompt-test")
   :perform (test-op (o c) (symbol-call :rove :run c)))
