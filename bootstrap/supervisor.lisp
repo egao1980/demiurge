@@ -25,6 +25,8 @@
   (:import-from #:demiurge/src/persistence/memory-keys
                 #:record-task-result #:remember #:recall
                 #:log-interaction #:set-preference #:get-preference)
+  (:import-from #:demiurge-bootstrap/bootstrap/agent-loop
+                #:start-agent-task)
   (:import-from #:alexandria #:when-let)
   (:export #:run-supervisor-step #:dispatch-action #:parse-action
            #:register-supervisor-watchers #:discover-models
@@ -510,15 +512,30 @@ Returns new results or NIL if recovery is not possible."
   "Wire the supervisor into the blackboard via watchers.
 Replaces the old event-bus subscription model."
   ;; New task — watches :pending-task token (persistent, high priority)
+  ;; Dispatches to either tool-calling agent loop or plan-based supervisor
+  ;; based on :agent-mode BB section (:tool-calling or :plan, default :plan)
   (watch bb :id :supervisor-task
          :requires '(:pending-task)
          :handler (lambda (bb ksar)
                     (let* ((ctx-val (cdr (assoc :pending-task (ksar-context ksar))))
                            (desc (if (listp ctx-val) (getf ctx-val :description) ctx-val))
                            (source (if (listp ctx-val) (getf ctx-val :source) :unknown))
-                           (task-ctx (list :type "task" :description desc :source source)))
+                           (raw-mode (read-section bb :agent-mode))
+                           (mode (cond
+                                   ((null raw-mode) :plan)
+                                   ((keywordp raw-mode) raw-mode)
+                                   ((and (stringp raw-mode)
+                                         (string-equal raw-mode "TOOL-CALLING"))
+                                    :tool-calling)
+                                   (t :plan))))
                       (handler-case
-                          (run-supervisor-step bb mem :task-context task-ctx)
+                          (ecase mode
+                            (:tool-calling
+                             (format t "~&[supervisor] Starting agent task: ~A~%" desc)
+                             (start-agent-task bb mem desc))
+                            (:plan
+                             (let ((task-ctx (list :type "task" :description desc :source source)))
+                               (run-supervisor-step bb mem :task-context task-ctx))))
                         (serious-condition (e)
                           (format *error-output* "~&[supervisor] Task error: ~A~%" e)
                           (record-bb-error bb ksar e)))))

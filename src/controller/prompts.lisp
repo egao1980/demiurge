@@ -18,6 +18,7 @@
                 #:get-preference)
   (:export #:build-supervisor-prompt #:build-task-prompt #:build-review-prompt
            #:build-self-improve-prompt #:build-merge-review-prompt
+           #:build-agent-prompt
            #:*identity-preamble* #:*architecture-section*
            #:format-capability-catalog #:format-memory-context))
 
@@ -317,7 +318,9 @@ IMPORTANT RULES:
   write-file to /workspace/foo.lisp → visible inside containers at /workspace/foo.lisp.
   Always write generated code to /workspace/ paths.
 - :compute has TWO modes:
-  * EPHEMERAL: run-command — each call is a fresh container (podman run --rm), /workspace/ mounted.
+  * EPHEMERAL: run-command — each call is a FRESH container (podman run --rm), /workspace/ mounted.
+    Installed packages and files outside /workspace/ are LOST between calls.
+    Chain related commands with && in ONE call: \"apt-get update && apt-get install -y sbcl && sbcl --script /workspace/fib.lisp\"
   * PERSISTENT: create-env (params: name, image) -> exec-in-env (params: env, command) -> destroy-env (params: env).
     State persists across exec-in-env calls. Use for multi-step work: install tools, write files, run code.
     Only use real Docker Hub images (ubuntu:24.04, debian:bookworm, etc.).
@@ -390,3 +393,52 @@ IMPORTANT RULES:
     (format s "{\"action\": \"merge-resolve\", \"resolutions\": {\"<section>\": \"parent|workspace\"}, ")
     (format s "\"reasoning\": \"...\"}~%")
     (format s "```~%")))
+
+;;; --- Agent (tool-calling) prompt ---
+
+(defvar *agent-identity*
+  "You are Demiurge, an autonomous software agent with direct tool access.
+
+You complete tasks by calling tools — reading/writing files, running commands in
+containers, searching the web, and inspecting the blackboard. You have full
+autonomy: decide what to do, call the tools, observe results, iterate.
+
+You are NOT generating a plan for someone else to execute. You ARE the executor.")
+
+(defvar *agent-rules*
+  "## Rules
+
+### File system
+- /workspace/ is a SHARED directory mounted into every container.
+  write_file to /workspace/foo.lisp → visible at /workspace/foo.lisp inside any container.
+
+### Compute — CRITICAL
+- **run_command** spawns a FRESH ephemeral container every call.
+  Anything installed or written outside /workspace/ is LOST between calls.
+  ALWAYS chain related commands with && in ONE call:
+    GOOD: run_command(\"apt-get update && apt-get install -y sbcl && sbcl --script /workspace/fib.lisp\")
+    BAD:  run_command(\"apt-get install -y sbcl\") then run_command(\"sbcl --script /workspace/fib.lisp\")  ← sbcl is gone!
+- For multi-step work needing persistent state (install tools, compile, run, debug),
+  use **create_environment** + **exec_in_environment** instead.
+  State (installed packages, files) persists across exec_in_environment calls.
+- All containers run as root. NEVER use sudo.
+- Use real Docker Hub images (ubuntu:24.04, debian:bookworm, etc.).
+
+### Strategy
+- For simple tasks (write file + run once): write_file then ONE run_command with chained commands.
+- For complex tasks (install tools, iterate): create_environment, then exec_in_environment repeatedly.
+- When a tool returns an error, analyze it and try a different approach.
+- When you're done, respond with a text summary of what you accomplished.
+  Do NOT call any more tools after you're finished.")
+
+(defun build-agent-prompt (bb &key mem task)
+  "Build the system prompt for the tool-calling agent mode.
+Simpler than the supervisor prompt — no JSON plan format, just tool descriptions and rules."
+  (declare (ignore task))
+  (with-output-to-string (s)
+    (format s "~A~%~%" *agent-identity*)
+    (format s "~A~%~%" *agent-rules*)
+    (format s "~A" (format-capability-catalog bb))
+    (format s "~A" (format-bb-sections bb))
+    (when mem
+      (format s "~A" (format-memory-context mem)))))

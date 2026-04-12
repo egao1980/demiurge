@@ -1,12 +1,14 @@
 (defpackage #:demiurge-bootstrap/bootstrap/llm-ks
   (:use #:cl)
   (:import-from #:demiurge/src/capabilities/llm
-                #:llm-generation-capability #:generate-text #:generate-embedding #:list-models)
+                #:llm-generation-capability #:generate-text #:generate-with-tools
+                #:generate-embedding #:list-models)
   (:import-from #:demiurge/src/blackboard/core
                 #:blackboard #:read-section)
   (:import-from #:cl-openai
                 #:make-provider #:create-chat-completion #:create-embedding
-                #:extract-content #:extract-model-ids)
+                #:extract-content #:extract-tool-calls #:extract-model-ids
+                #:make-tool-call-message)
   (:export #:openai-llm-capability #:make-openai-llm-capability))
 
 (in-package #:demiurge-bootstrap/bootstrap/llm-ks)
@@ -39,18 +41,41 @@ enables dynamic model-role resolution via :model-roles and :llm-config sections.
                        :model model
                        config)))))))
 
+;;; --- message conversion -----------------------------------------------------
+
+(defun message-to-hash (m)
+  "Convert a plist message to an OpenAI-format hash-table.
+Handles :role, :content, :tool-calls, :tool-call-id, and :name."
+  (let ((h (make-hash-table :test 'equal)))
+    (setf (gethash "role" h) (or (getf m :role) "user"))
+    (when (getf m :content)
+      (setf (gethash "content" h) (getf m :content)))
+    (when (getf m :tool-calls)
+      (setf (gethash "tool_calls" h) (coerce (getf m :tool-calls) 'vector)))
+    (when (getf m :tool-call-id)
+      (setf (gethash "tool_call_id" h) (getf m :tool-call-id)))
+    (when (getf m :name)
+      (setf (gethash "name" h) (getf m :name)))
+    h))
+
 ;;; --- capability methods ----------------------------------------------------
 
 (defmethod generate-text ((cap openai-llm-capability) messages &key (role :supervisor))
   (let* ((provider (resolve-provider cap role))
-         (msg-list (mapcar (lambda (m)
-                             (let ((h (make-hash-table :test 'equal)))
-                               (setf (gethash "role" h) (or (getf m :role) "user")
-                                     (gethash "content" h) (or (getf m :content) ""))
-                               h))
-                           messages))
+         (msg-list (mapcar #'message-to-hash messages))
          (response (create-chat-completion provider msg-list)))
     (extract-content response)))
+
+(defmethod generate-with-tools ((cap openai-llm-capability) messages tools &key (role :supervisor))
+  "Call chat completion with tool definitions. Returns (values content tool-calls raw-response).
+TOOLS is a list of OpenAI tool definition hash-tables.
+TOOL-CALLS is a vector of tool-call objects from the response (or NIL)."
+  (let* ((provider (resolve-provider cap role))
+         (msg-list (mapcar #'message-to-hash messages))
+         (response (create-chat-completion provider msg-list :tools tools)))
+    (values (extract-content response)
+            (extract-tool-calls response)
+            response)))
 
 (defmethod generate-embedding ((cap openai-llm-capability) text &key)
   (let ((provider (resolve-provider cap :embeddings)))

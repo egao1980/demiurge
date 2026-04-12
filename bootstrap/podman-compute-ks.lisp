@@ -90,15 +90,16 @@
       (list exit-code stdout stderr))))
 
 (defmethod create-environment ((cap podman-compute-capability) spec &key)
+  "Create a persistent named container with /workspace mounted from the shared workspace.
+The container's own filesystem persists across exec calls (packages, files outside /workspace)."
   (let* ((image (or (getf spec :image) (default-image cap)))
          (name (or (getf spec :name) (generate-env-name)))
-         (tmpdir (uiop:ensure-pathname
-                  (format nil "/tmp/~A/" name)
-                  :ensure-directory t)))
-    (ensure-directories-exist tmpdir)
+         (ws (namestring (shared-workspace cap))))
+    ;; Remove any stale container with the same name
+    (run-podman cap (list "rm" "-f" name) :ignore-errors t)
     (multiple-value-bind (stdout stderr exit-code)
         (run-podman cap (list "create" "--name" name
-                              "-v" (format nil "~A:/workspace" (namestring tmpdir))
+                              "-v" (format nil "~A:/workspace" ws)
                               "-w" "/workspace"
                               image "sleep" "infinity"))
       (declare (ignore stdout))
@@ -110,7 +111,7 @@
       (unless (zerop exit-code)
         (run-podman cap (list "rm" name) :ignore-errors t)
         (error "podman start failed (exit ~D): ~A" exit-code stderr)))
-    (list :name name :directory tmpdir :image image)))
+    (list :name name :image image)))
 
 (defmethod exec-in-environment ((cap podman-compute-capability) env command &key)
   (let ((name (getf env :name)))
@@ -119,10 +120,7 @@
       (list exit-code stdout stderr))))
 
 (defmethod destroy-environment ((cap podman-compute-capability) env &key)
-  (let ((name (getf env :name))
-        (dir (getf env :directory)))
+  (let ((name (getf env :name)))
     (run-podman cap (list "stop" name) :ignore-errors t)
     (run-podman cap (list "rm" name) :ignore-errors t)
-    (when (and dir (uiop:directory-exists-p dir))
-      (uiop:delete-directory-tree (pathname dir) :validate t :if-does-not-exist :ignore))
     t))

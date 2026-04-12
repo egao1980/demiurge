@@ -202,6 +202,20 @@
        (let ((ws (get-workspace bb (gethash "name" args))))
          (if ws (progn (discard-workspace ws) "Discarded.") "Workspace not found."))))
 
+    ;; cancel-task — signal a running agent workspace to stop
+    (cl-mcp-sdk:register-tool
+     reg "cancel-task" "Cancel a running agent task by workspace name"
+     (yason:parse "{\"type\":\"object\",\"properties\":{\"name\":{\"type\":\"string\"}},\"required\":[\"name\"]}"
+                  :object-as :hash-table :object-key-fn #'identity)
+     (lambda (args)
+       (let ((ws (get-workspace bb (gethash "name" args))))
+         (if ws
+             (progn
+               (write-section (workspace-blackboard ws) :agent-cancelled t)
+               (format nil "Cancellation signalled for ~A. Will stop at next iteration."
+                       (gethash "name" args)))
+             (format nil "Workspace '~A' not found." (gethash "name" args))))))
+
     ;; memory-query
     (cl-mcp-sdk:register-tool
      reg "memory-query" "Query persistent memory"

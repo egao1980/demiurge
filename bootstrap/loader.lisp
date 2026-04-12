@@ -70,7 +70,7 @@
                                    (push (cons (intern (string-upcase k) :keyword) v) roles))
                                  defaults)
                         (nreverse roles))
-                      '((:supervisor . "nvidia/nemotron-3-nano-4b")
+                      '((:supervisor . "qwen/qwen3-coder-next")
                         (:coder . "qwen/qwen3-coder-next")
                         (:fast . "nvidia/nemotron-3-nano-4b")
                         (:embeddings . "text-embedding-nomic-embed-text-v1.5")))))))
@@ -81,7 +81,12 @@
                 :image (or (and config (gethash "container_image" config))
                            "docker.io/library/ubuntu:24.04")))
     (seed :project-root
-          (or (and config (gethash "project_root" config)) "~/Projects/lisp/"))))
+          (or (and config (gethash "project_root" config)) "~/Projects/lisp/"))
+    (let ((mode-str (and config (gethash "agent_mode" config))))
+      (seed :agent-mode
+            (if (and mode-str (string-equal mode-str "tool-calling"))
+                :tool-calling
+                :plan)))))
 
 ;;; --- Capability registration ---
 

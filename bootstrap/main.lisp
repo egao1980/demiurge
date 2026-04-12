@@ -23,6 +23,11 @@
   ;; Communication
   (:import-from #:demiurge-bootstrap/bootstrap/mcp-bridge-ks
                 #:mcp-bridge-capability #:make-mcp-bridge-capability)
+  ;; Agent loop (tool-calling)
+  (:import-from #:demiurge-bootstrap/bootstrap/agent-tools
+                #:build-tool-definitions #:execute-tool-call)
+  (:import-from #:demiurge-bootstrap/bootstrap/agent-loop
+                #:start-agent-task)
   ;; Supervisor
   (:import-from #:demiurge-bootstrap/bootstrap/supervisor
                 #:run-supervisor-step #:dispatch-action #:parse-action
@@ -54,6 +59,9 @@
            #:local-compute-capability #:make-local-compute-capability
            #:podman-compute-capability #:make-podman-compute-capability
            #:mcp-bridge-capability #:make-mcp-bridge-capability
+           ;; Agent loop
+           #:build-tool-definitions #:execute-tool-call
+           #:start-agent-task
            ;; Supervisor
            #:run-supervisor-step #:dispatch-action #:parse-action
            #:register-supervisor-watchers #:discover-models
