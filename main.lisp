@@ -55,6 +55,8 @@
   (:import-from #:demiurge/src/knowledge-source/versioned
                 #:versioned-ks #:make-versioned-ks
                 #:current-version #:candidate-version #:promote-candidate)
+  (:import-from #:demiurge/src/knowledge-source/ab-testing
+                #:run-ab-test #:evaluate-metrics #:auto-promote)
   ;; Controller
   (:import-from #:demiurge/src/controller/main-loop
                 #:run-demiurge #:make-demiurge-instance #:stop-demiurge
@@ -112,6 +114,7 @@
            #:ks-precondition #:ks-execute #:ks-postcondition
            #:register-ks #:unregister-ks #:find-ks #:list-ks
            #:versioned-ks #:make-versioned-ks
+           #:run-ab-test #:evaluate-metrics #:auto-promote
            ;; Controller
            #:run-demiurge #:make-demiurge-instance #:stop-demiurge
            #:find-eligible-ks #:schedule-next-ks
