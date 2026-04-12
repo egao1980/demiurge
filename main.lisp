@@ -78,6 +78,12 @@
   (:import-from #:demiurge/src/introspection/render
                 #:render-bb-summary #:render-workspace #:render-capabilities
                 #:render-ks-list)
+  ;; Persistence
+  (:import-from #:demiurge/src/persistence/snapshot
+                #:save-blackboard #:load-blackboard
+                #:snapshot-to-file #:restore-from-file)
+  (:import-from #:demiurge/src/persistence/observability
+                #:make-event-logger #:bb-stats #:health-check)
   ;; Utils
   (:import-from #:demiurge/src/utils/config
                 #:get-config #:load-config)
@@ -126,6 +132,10 @@
            #:register-object #:lookup-object #:inspectable-p
            #:inspect-object
            #:render-bb-summary #:render-workspace #:render-capabilities
+           ;; Persistence
+           #:save-blackboard #:load-blackboard
+           #:snapshot-to-file #:restore-from-file
+           #:make-event-logger #:bb-stats #:health-check
            ;; Config
            #:get-config #:load-config))
 
