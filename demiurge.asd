@@ -16,5 +16,6 @@
                "demiurge/tests/workspace-test"
                "demiurge/tests/events-test"
                "demiurge/tests/ks-test"
-               "demiurge/tests/introspection-test")
+               "demiurge/tests/introspection-test"
+               "demiurge/tests/e2e-test")
   :perform (test-op (o c) (symbol-call :rove :run c)))

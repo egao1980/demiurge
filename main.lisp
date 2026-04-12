@@ -63,6 +63,8 @@
                 #:find-eligible-ks #:schedule-next-ks)
   (:import-from #:demiurge/src/controller/handlers
                 #:handle-new-task #:execute-ks-in-workspace)
+  (:import-from #:demiurge/src/controller/agent-loop
+                #:run-task #:run-issue-workflow)
   (:import-from #:demiurge/src/controller/timers
                 #:start-timer #:stop-timer)
   ;; Introspection
@@ -114,6 +116,7 @@
            #:run-demiurge #:make-demiurge-instance #:stop-demiurge
            #:find-eligible-ks #:schedule-next-ks
            #:handle-new-task #:execute-ks-in-workspace
+           #:run-task #:run-issue-workflow
            #:start-timer #:stop-timer
            ;; Introspection
            #:object-registry #:make-object-registry

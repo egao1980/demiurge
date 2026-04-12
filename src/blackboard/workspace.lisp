@@ -69,8 +69,12 @@
   "Create an isolated workspace with COW blackboard."
   (let* ((cow-bb (make-instance 'cow-blackboard :parent-bb bb))
          (ws (make-workspace name cow-bb :parent parent)))
-    ;; Copy notify-fn from parent
-    (setf (blackboard-notify-fn cow-bb) (blackboard-notify-fn bb))
+    ;; Share parent's notify-fn, capabilities, and KS registry
+    (setf (blackboard-notify-fn cow-bb) (blackboard-notify-fn bb)
+          (demiurge/src/blackboard/core:blackboard-capabilities cow-bb)
+          (demiurge/src/blackboard/core:blackboard-capabilities bb)
+          (demiurge/src/blackboard/core:blackboard-ks-registry cow-bb)
+          (demiurge/src/blackboard/core:blackboard-ks-registry bb))
     ;; Register workspace on root BB
     (let ((root-bb (find-root-bb bb)))
       (bt2:with-lock-held ((blackboard-lock root-bb))
