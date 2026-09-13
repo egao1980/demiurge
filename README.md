@@ -4,11 +4,11 @@ Product core for [cl-stack](https://github.com/egao1980/cl-stack) expert systems
 
 | System | Role |
 |--------|------|
-| `demiurge` (`stack-demiurge`) 0.3.0 | `expert-domain`, `defexpert`, `agent-ks`, controller, personal profile |
-| `demiurge/improve` 0.3.0 | Versioned-KS improvement cycle |
-| `demiurge/observe` 0.3.0 | Span/metric taxonomy, `/healthz` + `/readyz`, profiles |
-| `demiurge/serve` 0.3.0 | MCP / A2A / AG-UI Clack app + feedback |
-| `demiurge/ingest` 0.3.0 | Durable file / IMAP / object-store ingest |
+| `demiurge` (`stack-demiurge`) 0.3.1 | `expert-domain`, `defexpert`, `agent-ks`, controller, personal profile |
+| `demiurge/improve` 0.3.1 | Versioned-KS improvement cycle |
+| `demiurge/observe` 0.3.1 | Span/metric taxonomy, `/healthz` + `/readyz`, profiles |
+| `demiurge/serve` 0.3.1 | MCP / A2A / AG-UI Clack app + feedback |
+| `demiurge/ingest` 0.3.1 | Durable file / IMAP / object-store ingest |
 
 ```lisp
 (asdf:load-system "demiurge")

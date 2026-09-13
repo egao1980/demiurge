@@ -1,5 +1,5 @@
 (defsystem "demiurge"
-  :version "0.3.0"
+  :version "0.3.1"
   :description "Self-improving expert-system core for cl-stack (defexpert + agent-ks + controller)"
   :author "egao1980"
   :license "MIT"
@@ -52,7 +52,7 @@
   :in-order-to ((test-op (test-op "demiurge/tests"))))
 
 (defsystem "demiurge/improve"
-  :version "0.3.0"
+  :version "0.3.1"
   :description "Self-improvement cycle for demiurge (versioned-ks + eval gates)"
   :author "egao1980"
   :license "MIT"
@@ -66,7 +66,7 @@
                (:file "cycle")))
 
 (defsystem "demiurge/observe"
-  :version "0.3.0"
+  :version "0.3.1"
   :description "Observability subsystem: span/metric taxonomy, health, profiles"
   :author "egao1980"
   :license "MIT"
@@ -81,7 +81,7 @@
                (:file "profiles")))
 
 (defsystem "demiurge/serve"
-  :version "0.3.0"
+  :version "0.3.1"
   :description "Serve an expert-domain over MCP / A2A / AG-UI"
   :author "egao1980"
   :license "MIT"
@@ -105,7 +105,7 @@
                (:file "app")))
 
 (defsystem "demiurge/ingest"
-  :version "0.3.0"
+  :version "0.3.1"
   :description "Durable corpus ingest for demiurge (file / IMAP / object-store)"
   :author "egao1980"
   :license "MIT"

@@ -39,7 +39,7 @@
                  (expert-catalogue domain)
                  :blackboard blackboard
                  :name (or name (expert-name domain))
-                 :version "0.3.0"
+                 :version "0.3.1"
                  :instructions (format nil "Demiurge expert ~a" (expert-name domain)))))
     (mcp:register-tool server (make-ask-expert-tool domain))
     (mcp:register-tool server (make-record-feedback-tool domain))

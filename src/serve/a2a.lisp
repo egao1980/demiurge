@@ -25,7 +25,7 @@
   (a2a:make-agent-card
    :name (expert-name domain)
    :description (format nil "Demiurge expert ~a" (expert-name domain))
-   :version "0.3.0"
+   :version "0.3.1"
    :url url
    :skills (%steering-skills domain)))
 
