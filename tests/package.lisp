@@ -1,6 +1,6 @@
 (defpackage #:demiurge/tests
   (:use #:cl #:rove #:demiurge #:demiurge/improve #:demiurge/observe
-        #:demiurge/serve #:demiurge/ingest)
+        #:demiurge/serve #:demiurge/ingest #:demiurge/workflows)
   (:shadowing-import-from #:demiurge #:run-tests)
   (:local-nicknames (#:bb #:blackboard-protocol)
                     (#:cap #:capability-protocol)
@@ -18,6 +18,9 @@
                     (#:a2a #:a2a-protocol)
                     (#:ag-ui #:ag-ui-protocol)
                     (#:mail #:mail-protocol)
-                    (#:obj #:object-store-protocol)))
+                    (#:obj #:object-store-protocol)
+                    (#:web #:websearch-protocol)
+                    (#:doc #:doc-extract-protocol)
+                    (#:wf #:demiurge/workflows)))
 
 (in-package #:demiurge/tests)

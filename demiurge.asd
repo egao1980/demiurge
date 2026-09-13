@@ -1,5 +1,5 @@
 (defsystem "demiurge"
-  :version "0.3.1"
+  :version "0.3.2"
   :description "Self-improving expert-system core for cl-stack (defexpert + agent-ks + controller)"
   :author "egao1980"
   :license "MIT"
@@ -30,7 +30,8 @@
                            "demiurge/improve"
                            "demiurge/observe"
                            "demiurge/serve"
-                           "demiurge/ingest")
+                           "demiurge/ingest"
+                           "demiurge/workflows")
                 :ci (:with ("event-backend-libuv"
                             "sql-backend-sqlite3"
                             "log-backend-log4cl"
@@ -52,7 +53,7 @@
   :in-order-to ((test-op (test-op "demiurge/tests"))))
 
 (defsystem "demiurge/improve"
-  :version "0.3.1"
+  :version "0.3.2"
   :description "Self-improvement cycle for demiurge (versioned-ks + eval gates)"
   :author "egao1980"
   :license "MIT"
@@ -66,7 +67,7 @@
                (:file "cycle")))
 
 (defsystem "demiurge/observe"
-  :version "0.3.1"
+  :version "0.3.2"
   :description "Observability subsystem: span/metric taxonomy, health, profiles"
   :author "egao1980"
   :license "MIT"
@@ -81,7 +82,7 @@
                (:file "profiles")))
 
 (defsystem "demiurge/serve"
-  :version "0.3.1"
+  :version "0.3.2"
   :description "Serve an expert-domain over MCP / A2A / AG-UI"
   :author "egao1980"
   :license "MIT"
@@ -105,7 +106,7 @@
                (:file "app")))
 
 (defsystem "demiurge/ingest"
-  :version "0.3.1"
+  :version "0.3.2"
   :description "Durable corpus ingest for demiurge (file / IMAP / object-store)"
   :author "egao1980"
   :license "MIT"
@@ -122,9 +123,30 @@
                (:file "sources")
                (:file "pipeline")))
 
+(defsystem "demiurge/workflows"
+  :version "0.3.2"
+  :description "Durable project workflows and deep-research fan-out"
+  :author "egao1980"
+  :license "MIT"
+  :depends-on ("demiurge"
+               "websearch-protocol"
+               "doc-extract-protocol"
+               "schema-protocol"
+               "eval-protocol"
+               "rag-protocol"
+               "llm-protocol"
+               "llm-protocol/router"
+               "task-protocol")
+  :serial t
+  :pathname "src/workflows"
+  :components ((:file "package")
+               (:file "reporting")
+               (:file "project")
+               (:file "deep-research")))
+
 (defsystem "demiurge/tests"
   :depends-on ("demiurge" "demiurge/improve" "demiurge/observe"
-               "demiurge/serve" "demiurge/ingest"
+               "demiurge/serve" "demiurge/ingest" "demiurge/workflows"
                "llm-protocol" "event-backend-libuv"
                "sql-backend-sqlite3" "rove")
   :pathname "tests"
@@ -138,7 +160,8 @@
                (:file "improve-test")
                (:file "observe-test")
                (:file "serve-test")
-               (:file "ingest-test"))
+               (:file "ingest-test")
+               (:file "workflows-test"))
   :perform (test-op (o c)
              (unless (symbol-call :rove :run c)
                (error "tests failed for ~A" (component-name c)))))
