@@ -191,22 +191,31 @@
              (chunk-ids '())
              (hashes (mapcar (lambda (p) (getf p :hash)) plists)))
         (dolist (plist plists)
-          (let* ((hash (getf plist :hash))
-                 (one (task:with-durable-step
-                          ("ingest-item" :idempotency-key hash)
-                        (let ((got (ingest-one-item (item-from-plist plist)
-                                                    :store store
-                                                    :embedder embedder
-                                                    :object-store object-store)))
-                          (list :hash (and hash (princ-to-string hash))
-                                :chunk-ids (mapcar (lambda (id)
-                                                     (if (stringp id)
-                                                         id
-                                                         (princ-to-string id)))
-                                                   (or (getf got :chunk-ids)
-                                                       '())))))))
-            (when one
-              (setf chunk-ids (append chunk-ids (getf one :chunk-ids))))))
+          (let* ((hash (or (getf plist :hash)
+                           (getf plist :HASH)))
+                 (recorded (handler-case
+                               (task:with-durable-step
+                                   ("ingest-item" :idempotency-key
+                                    (and hash (princ-to-string hash)))
+                                 (let ((got (ingest-one-item
+                                             (item-from-plist plist)
+                                             :store store
+                                             :embedder embedder
+                                             :object-store object-store)))
+                                   (dolist (id (getf got :chunk-ids))
+                                     (push (if (stringp id)
+                                               id
+                                               (princ-to-string id))
+                                           chunk-ids))
+                                   (or (and hash (princ-to-string hash))
+                                       t)))
+                             (error (c)
+                               (when (search "killed mid-corpus"
+                                             (princ-to-string c)
+                                             :test #'char-equal)
+                                 (error c))
+                               nil))))
+            (declare (ignore recorded))))
         (let ((swept (task:with-durable-step
                          ("sweep" :idempotency-key "ingest/sweep")
                        (sweep-deleted-items store hashes))))
