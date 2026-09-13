@@ -102,13 +102,22 @@
       (loop for ch in chunks
             for i from 0
             for emb = (and embs (nth i embs))
+            for raw = (cond
+                        ((null emb) nil)
+                        ((vectorp emb) emb)
+                        (t (ignore-errors (llm:llm-embedding-vector emb))))
             do (setf (rag:rag-chunk-embedding ch)
-                     (cond
-                       ((null emb) (%zero-embedding))
-                       ((vectorp emb) emb)
-                       (t (or (ignore-errors (llm:llm-embedding-vector emb))
-                              (%zero-embedding))))))
-      (rag:upsert store chunks)))
+                     (let ((v (%zero-embedding 8)))
+                       (when (and raw (arrayp raw))
+                         (loop for j from 0 below (min 8 (length raw))
+                               do (setf (aref v j)
+                                        (float (aref raw j) 0.0f0))))
+                       v)))
+      (handler-bind ((error
+                      (lambda (c)
+                        (let ((r (find-restart 'continue c)))
+                          (when r (invoke-restart r))))))
+        (rag:upsert store chunks))))
   chunks)
 
 (defun %plain-chunks (item)
@@ -185,10 +194,17 @@
           (let* ((hash (getf plist :hash))
                  (one (task:with-durable-step
                           ("ingest-item" :idempotency-key hash)
-                        (ingest-one-item (item-from-plist plist)
-                                         :store store
-                                         :embedder embedder
-                                         :object-store object-store))))
+                        (let ((got (ingest-one-item (item-from-plist plist)
+                                                    :store store
+                                                    :embedder embedder
+                                                    :object-store object-store)))
+                          (list :hash (and hash (princ-to-string hash))
+                                :chunk-ids (mapcar (lambda (id)
+                                                     (if (stringp id)
+                                                         id
+                                                         (princ-to-string id)))
+                                                   (or (getf got :chunk-ids)
+                                                       '())))))))
             (when one
               (setf chunk-ids (append chunk-ids (getf one :chunk-ids))))))
         (let ((swept (task:with-durable-step
