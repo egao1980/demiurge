@@ -43,8 +43,18 @@
    :format (getf plist :format)
    :metadata (getf plist :metadata)))
 
+(defun %basename (uri)
+  "Last path component. canonicalize-format treats #\/ as a mimetype slash,
+   so a Unix path like /tmp/foo.md must not be passed through whole."
+  (let ((s (etypecase uri
+             (pathname (namestring uri))
+             (string uri)
+             (t (princ-to-string uri)))))
+    (subseq s (1+ (max (or (position #\/ s :from-end t) -1)
+                       (or (position #\\ s :from-end t) -1))))))
+
 (defun %infer-format (uri)
-  (or (and uri (doc:canonicalize-format uri))
+  (or (and uri (doc:canonicalize-format (%basename uri)))
       :txt))
 
 (defun %path-string (p)

@@ -22,6 +22,8 @@
            (items (enumerate-items source)))
       (ok (= 2 (length items)))
       (ok (every #'ingest-item-hash items))
+      (ok (every (lambda (it) (eq :md (ingest-item-format it))) items)
+          "Unix path must not be interned as a format keyword")
       (ok (equal (mapcar #'ingest-item-hash items)
                  (mapcar #'ingest-item-hash (enumerate-items source)))))))
 

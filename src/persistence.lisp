@@ -3,6 +3,45 @@
 (defvar *board-domains* (make-hash-table :test 'eq)
   "Root blackboard → EXPERT-DOMAIN.")
 
+(defun %decoded-event-plist (data)
+  "Normalize json-protocol/jzon object decode (vector or hash-table) to a plist
+   so TASK-PROTOCOL:EVENT-FROM-PLIST can rehydrate SQL journal payloads."
+  (cond
+    ((listp data) data)
+    ((hash-table-p data)
+     (let ((out '()))
+       (maphash (lambda (k v)
+                  (push (if (keywordp k)
+                            k
+                            (intern (string-upcase (string k)) :keyword))
+                        out)
+                  (push v out))
+                data)
+       (nreverse out)))
+    ((and (vectorp data) (evenp (length data)))
+     (loop for i from 0 below (length data) by 2
+           for k = (aref data i)
+           collect (if (keywordp k)
+                       k
+                       (intern (string-upcase (string k)) :keyword))
+           collect (aref data (1+ i))))
+    (t data)))
+
+(defvar *event-from-plist-compat* nil)
+
+(defun %install-event-from-plist-compat ()
+  "B3 loads json-protocol (via serve/wire). task-protocol ENCODE-PAYLOAD then
+   prefers JSON; DECODE returns a string-key vector, not a plist. Wrap until
+   task-protocol accepts both."
+  (unless *event-from-plist-compat*
+    (let ((orig (fdefinition 'task-protocol:event-from-plist)))
+      (setf (fdefinition 'task-protocol:event-from-plist)
+            (lambda (data)
+              (funcall orig (%decoded-event-plist data))))
+      (setf *event-from-plist-compat* t))))
+
+(%install-event-from-plist-compat)
+
 (defun domain-task-id (domain)
   (format nil "domain/~a" (expert-name domain)))
 

@@ -44,10 +44,25 @@
           (setf (gethash h seen) t))))
     (loop for k being the hash-keys of seen collect k)))
 
+(defun %text-format-p (fmt)
+  (member fmt '(:txt :text :md :markdown :rst :plain nil) :test #'eq))
+
+(defun %extract-backend (fmt)
+  (or (ignore-errors (doc:find-extractor fmt))
+      (when (%text-format-p fmt)
+        (make-instance 'plain-text-extractor))
+      (make-instance 'plain-text-extractor)))
+
 (defun %extract (item)
-  (let ((fmt (or (ingest-item-format item) :txt))
-        (source (or (ingest-item-content item)
-                    (ingest-item-uri item))))
+  (let* ((fmt (or (ingest-item-format item) :txt))
+         (fmt (if (and (or (stringp fmt) (pathnamep fmt))
+                       (or (find #\/ (if (pathnamep fmt) (namestring fmt) fmt))
+                           (find #\\ (if (pathnamep fmt) (namestring fmt) fmt))))
+                  (%infer-format fmt)
+                  (or (ignore-errors (doc:canonicalize-format fmt)) fmt)))
+         (source (or (ingest-item-content item)
+                     (ingest-item-uri item)))
+         (backend (%extract-backend fmt)))
     (restart-case
         (handler-bind ((doc:no-extractor-for-format
                         (lambda (c)
@@ -56,7 +71,7 @@
                               (invoke-restart r
                                               (make-instance
                                                'plain-text-extractor)))))))
-          (doc:extract-document nil source :format fmt))
+          (doc:extract-document backend source :format fmt))
       (use-value (value)
         :report "Use a supplied extracted-document"
         value)
