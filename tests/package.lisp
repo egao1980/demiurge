@@ -1,5 +1,6 @@
 (defpackage #:demiurge/tests
-  (:use #:cl #:rove #:demiurge #:demiurge/improve #:demiurge/observe)
+  (:use #:cl #:rove #:demiurge #:demiurge/improve #:demiurge/observe
+        #:demiurge/serve #:demiurge/ingest)
   (:shadowing-import-from #:demiurge #:run-tests)
   (:local-nicknames (#:bb #:blackboard-protocol)
                     (#:cap #:capability-protocol)
@@ -12,6 +13,11 @@
                     (#:tel #:telemetry-protocol)
                     (#:log #:log-protocol)
                     (#:rag #:rag-protocol)
-                    (#:obs #:demiurge/observe)))
+                    (#:obs #:demiurge/observe)
+                    (#:mcp #:mcp-protocol)
+                    (#:a2a #:a2a-protocol)
+                    (#:ag-ui #:ag-ui-protocol)
+                    (#:mail #:mail-protocol)
+                    (#:obj #:object-store-protocol)))
 
 (in-package #:demiurge/tests)
