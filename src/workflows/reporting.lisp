@@ -27,6 +27,7 @@
 
 (defun workflow-state-delta (board key value)
   "AG-UI STATE_DELTA for a board section write, when the A5 adapter is loaded."
+  (declare (ignore board))
   (let* ((patch-fn (%find-sym '#:blackboard-wire/ag-ui "MAKE-SECTION-PATCH"))
          (event-fn (%find-sym '#:ag-ui-protocol "MAKE-STATE-DELTA-EVENT")))
     (when (and patch-fn event-fn (fboundp patch-fn) (fboundp event-fn))
@@ -35,10 +36,10 @@
 
 (defun sync-workflow-wire (workflow &key board status summary)
   "Push task-tree progress to A2A + AG-UI when serve/wire systems are loaded."
-  (let ((board (or board (and (project-workflow-p workflow)
-                              (project-workflow-board workflow))))
-        (a2a (workflow-a2a-state status))
-        (delta (and board (workflow-state-delta board :round-summary summary))))
+  (let* ((board (or board (and (project-workflow-p workflow)
+                               (project-workflow-board workflow))))
+         (a2a (workflow-a2a-state status))
+         (delta (and board (workflow-state-delta board :round-summary summary))))
     (list :a2a a2a :delta delta)))
 
 (defun report-workflow-progress (workflow &key board round summary status)

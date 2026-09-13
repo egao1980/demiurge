@@ -152,7 +152,7 @@
         "milestone-reached checkpoint is journaled")
     (let ((wf (handler-bind ((approval-required
                               (lambda (c)
-                                (invoke-restart 'approve))))
+                                (invoke-approve c))))
                 (start-project domain spec :journal journal :task-id task-id))))
       (ok (project-workflow-p wf))
       (ok (eq :completed (project-workflow-status wf)))

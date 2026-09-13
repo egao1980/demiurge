@@ -199,13 +199,13 @@
       (when (and p (plusp (length p)))
         (format s "~%~a" p)))))
 
-(defun research-one-subquestion (input &key domain llm websearch browser)
+(defun research-one-subquestion (input &key domain llm websearch browser (top-k 5))
   "RAG retrieve + search-web + optional browser fetch-page. → plist."
   (when *research-child-exec-hook*
     (funcall *research-child-exec-hook* input))
   (let* ((question (or (getf input :question) ""))
          (id (or (getf input :id) question))
-         (rag-hits (%retrieve-corpus domain question :llm llm))
+         (rag-hits (%retrieve-corpus domain question :llm llm :top-k top-k))
          (hits (ignore-errors (web:search-web websearch question :count 5)))
          (web-hits (mapcar #'%hit-plist (or hits nil)))
          (pages (loop for h in web-hits
@@ -229,7 +229,8 @@
           :rag-hits rag-hits
           :web-hits web-hits)))
 
-(defun %spawn-research-child (parent input &key domain llm websearch browser)
+(defun %spawn-research-child (parent input &key domain llm websearch browser
+                             (top-k 5))
   (let ((child (task:spawn-child-task
                 parent
                 (lambda (in)
@@ -237,7 +238,8 @@
                                             :domain domain
                                             :llm llm
                                             :websearch websearch
-                                            :browser browser))
+                                            :browser browser
+                                            :top-k top-k))
                 :input input)))
     (when *research-child-hook*
       (funcall *research-child-hook* child input))
@@ -387,11 +389,8 @@
          (board (or blackboard (bb:make-blackboard)))
          (wf (make-project-workflow :name run-id :domain domain
                                     :board board :task task))
-         (children '())
-         (result nil))
-    (declare (ignore top-k))
+         (children '()))
     (labels ((finish (plist)
-               (setf result plist)
                (ignore-errors (task:complete-task task plist))
                (setf (project-workflow-status wf)
                      (if (eq (getf plist :verdict) :incomplete)
@@ -399,8 +398,7 @@
                          :completed))
                plist)
              (partial (reason kids)
-               (let* ((doc (%synthesize-document question kids
-                                                 :partial t))
+               (let* ((doc (%synthesize-document question kids :partial t))
                       (md (render-research-document doc :format :markdown)))
                  (report-workflow-progress
                   wf :board board :status :failed
@@ -410,7 +408,93 @@
                                :children kids
                                :markdown md
                                :document-text md
-                               :reason reason)))))
+                               :reason reason))))
+             (run-rounds (pending)
+               (loop for round from 1 to max-rounds
+                     while pending
+                     do (dolist (q pending)
+                          (%spawn-research-child
+                           task q
+                           :domain domain :llm llm
+                           :websearch websearch :browser browser
+                           :top-k top-k))
+                        (let ((joined
+                               (task:with-durable-step
+                                   ((format nil "join-~d" round)
+                                    :idempotency-key
+                                    (format nil "research/join/~d" round))
+                                 (%phase (format nil "join-~d" round)
+                                         (lambda ()
+                                           (task:join-children
+                                            task :policy :all))))))
+                          (setf children (or joined children)))
+                        (report-workflow-progress
+                         wf :board board :round round :status :working
+                         :summary (format nil "round ~d joined ~d"
+                                          round (length children)))
+                        (setf pending
+                              (unless (>= round max-rounds)
+                                (let ((gap-plist
+                                       (task:with-durable-step
+                                           ((format nil "gap-~d" round)
+                                            :idempotency-key
+                                            (format nil "research/gap/~d" round))
+                                         (%phase (format nil "gap-~d" round)
+                                                 (lambda ()
+                                                   (research-plan-plist
+                                                    (%gap-from-llm
+                                                     llm question children)))))))
+                                  (remove-if
+                                   (lambda (q)
+                                     (or (null (getf q :question))
+                                         (zerop (length (getf q :question)))))
+                                   (getf gap-plist :subquestions)))))))
+             (deliver ()
+               (let* ((synth-plist
+                       (task:with-durable-step
+                           ("synthesize" :idempotency-key "research/synthesize")
+                         (%phase "synthesize"
+                                 (lambda ()
+                                   (let* ((prompt
+                                           (format nil
+                                                   "Synthesize a cited report for ~a from ~d sub-answers."
+                                                   question (length children)))
+                                          (resp (llm:generate llm prompt))
+                                          (text (or (and resp
+                                                         (llm:llm-response-text resp))
+                                                    "")))
+                                     (list :text text))))))
+                      (doc (%synthesize-document
+                            question children
+                            :synthesis-text (getf synth-plist :text)))
+                      (md (task:with-durable-step
+                              ("render" :idempotency-key "research/render")
+                            (%phase "render"
+                                    (lambda ()
+                                      (render-research-document
+                                       doc :format :markdown)))))
+                      (run (task:with-durable-step
+                               ("gate" :idempotency-key "research/gate")
+                             (%phase "gate"
+                                     (lambda ()
+                                       (let ((ev (%quality-gate
+                                                  question children md)))
+                                         (list :mean (eval:eval-run-mean ev)
+                                               :n (eval:eval-run-n ev)
+                                               :pass-count
+                                               (eval:eval-run-pass-count ev)
+                                               :verdict (%verdict-from-run ev)))))))
+                      (verdict (or (getf run :verdict) :pass)))
+                 (report-workflow-progress
+                  wf :board board :status :completed
+                  :summary (format nil "delivered ~a" verdict))
+                 (finish (list :verdict verdict
+                               :question question
+                               :children children
+                               :markdown md
+                               :document-text md
+                               :eval-mean (getf run :mean)
+                               :eval-n (getf run :n))))))
       (task:with-durable-task (task journal)
         (when (eq (task:durable-task-status task) :completed)
           (return-from run-deep-research
@@ -432,91 +516,8 @@
                  wf :board board :round 0 :status :working
                  :summary (format nil "plan ~a subquestions"
                                   (length (getf plan-plist :subquestions))))
-                (let ((pending (copy-list (getf plan-plist :subquestions))))
-                  (loop for round from 1 to max-rounds
-                        while pending
-                        do (progn
-                             (dolist (q pending)
-                               (%spawn-research-child
-                                task q
-                                :domain domain :llm llm
-                                :websearch websearch :browser browser))
-                             (let ((joined
-                                    (task:with-durable-step
-                                        ((format nil "join-~d" round)
-                                         :idempotency-key
-                                         (format nil "research/join/~d" round))
-                                      (%phase (format nil "join-~d" round)
-                                              (lambda ()
-                                                (task:join-children
-                                                 task :policy :all))))))
-                               (setf children (or joined children))))
-                             (report-workflow-progress
-                              wf :board board :round round :status :working
-                              :summary (format nil "round ~d joined ~d"
-                                               round (length children)))
-                             (setf pending
-                                   (if (>= round max-rounds)
-                                       nil
-                                       (let ((gap-plist
-                                              (task:with-durable-step
-                                                  ((format nil "gap-~d" round)
-                                                   :idempotency-key
-                                                   (format nil "research/gap/~d" round))
-                                                (%phase (format nil "gap-~d" round)
-                                                        (lambda ()
-                                                          (research-plan-plist
-                                                           (%gap-from-llm
-                                                            llm question children)))))))
-                                         (remove-if
-                                          (lambda (q)
-                                            (or (null (getf q :question))
-                                                (zerop (length (getf q :question)))))
-                                          (getf gap-plist :subquestions)))))))
-                  (let* ((synth-plist
-                          (task:with-durable-step
-                              ("synthesize" :idempotency-key "research/synthesize")
-                            (%phase "synthesize"
-                                    (lambda ()
-                                      (let* ((prompt
-                                              (format nil
-                                                      "Synthesize a cited report for ~a from ~d sub-answers."
-                                                      question (length children)))
-                                             (resp (llm:generate llm prompt))
-                                             (text (or (and resp (llm:llm-response-text resp))
-                                                       "")))
-                                        (list :text text))))))
-                         (doc (%synthesize-document
-                               question children
-                               :synthesis-text (getf synth-plist :text)))
-                         (md (task:with-durable-step
-                                 ("render" :idempotency-key "research/render")
-                               (%phase "render"
-                                       (lambda ()
-                                         (render-research-document
-                                          doc :format :markdown)))))
-                         (run (task:with-durable-step
-                                  ("gate" :idempotency-key "research/gate")
-                                (%phase "gate"
-                                        (lambda ()
-                                          (let ((ev (%quality-gate
-                                                     question children md)))
-                                            (list :mean (eval:eval-run-mean ev)
-                                                  :n (eval:eval-run-n ev)
-                                                  :pass-count
-                                                  (eval:eval-run-pass-count ev)
-                                                  :verdict (%verdict-from-run ev)))))))
-                         (verdict (or (getf run :verdict) :pass)))
-                    (report-workflow-progress
-                     wf :board board :status :completed
-                     :summary (format nil "delivered ~a" verdict))
-                    (finish (list :verdict verdict
-                                  :question question
-                                  :children children
-                                  :markdown md
-                                  :document-text md
-                                  :eval-mean (getf run :mean)
-                                  :eval-n (getf run :n))))))))
+                (run-rounds (copy-list (getf plan-plist :subquestions)))
+                (deliver)))
           (use-partial ()
             :report "Deliver a graceful partial report"
             (partial :budget-exceeded children)))))))

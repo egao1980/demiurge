@@ -109,7 +109,8 @@
 (defun record-milestone (name &key (task task:*task*))
   "Named journal checkpoint: a STEP-COMPLETED named milestone-reached."
   (check-type name (or string symbol))
-  (let ((key (format nil "milestone/~a" (string-downcase (string name)))))
+  (let ((task:*task* (or task task:*task*))
+        (key (format nil "milestone/~a" (string-downcase (string name)))))
     (task:with-durable-step ("milestone-reached" :idempotency-key key)
       (list :milestone (string-downcase (string name)) :reached t))))
 
@@ -123,12 +124,14 @@
          (key (format nil "approval/~a" name))
          (journal (or (and task (task:durable-task-journal task))
                       task:*journal*)))
+    ;; Consume the milestone-reached checkpoint first so resume does not
+    ;; diverge (unconsumed recorded steps) when the wait-input already exists.
+    (record-milestone name :task task)
     (when (%find-step journal task "await-approval" :idempotency-key key)
       (return-from await-approval
         (task:with-durable-step ("await-approval" :idempotency-key key)
           (list :milestone name :approved t))))
     (unless (%find-wait-input journal task :prompt prompt)
-      (record-milestone name :task task)
       (task:request-input task :prompt prompt))
     (setf (task:durable-task-status task) :waiting)
     (restart-case
