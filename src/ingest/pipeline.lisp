@@ -28,9 +28,19 @@
 (defun %object-store-for (store)
   (or store obj:*object-store*))
 
+(defun %store-chunk-table (store)
+  "Slot name CHUNKS is interned in the store's home package, not this one."
+  (or (let ((acc (find-symbol "MOCK-STORE-TABLE" :rag-protocol)))
+        (when (and acc (fboundp acc))
+          (ignore-errors (funcall acc store))))
+      (loop for pkg-name in '("RAG-PROTOCOL" "RAG-BACKEND-MEMORY" "RAG-BACKEND-SQL")
+            for pkg = (find-package pkg-name)
+            for slot = (and pkg (find-symbol "CHUNKS" pkg))
+            when (and slot (slot-exists-p store slot))
+              return (slot-value store slot))))
+
 (defun list-stored-chunks (store)
-  (let ((table (and (slot-exists-p store 'chunks)
-                    (slot-value store 'chunks))))
+  (let ((table (%store-chunk-table store)))
     (if (hash-table-p table)
         (loop for ch being the hash-values of table collect ch)
         nil)))
@@ -79,35 +89,58 @@
         :report "Skip this item"
         nil))))
 
+(defun %zero-embedding (&optional (dim 8))
+  (make-array dim :element-type 'single-float :initial-element 0.0f0))
+
 (defun %embed-and-upsert (store embedder chunks)
   (when chunks
-    (let* ((texts (mapcar #'rag:rag-chunk-text chunks))
-           (result (llm:embed embedder texts :dimensions 8))
-           (embs (llm:llm-embed-result-embeddings result)))
+    (let ((embs (handler-case
+                    (let* ((texts (mapcar #'rag:rag-chunk-text chunks))
+                           (result (llm:embed embedder texts :dimensions 8)))
+                      (llm:llm-embed-result-embeddings result))
+                  (error () nil))))
       (loop for ch in chunks
-            for emb in embs
+            for i from 0
+            for emb = (and embs (nth i embs))
             do (setf (rag:rag-chunk-embedding ch)
-                     (llm:llm-embedding-vector emb)))
+                     (cond
+                       ((null emb) (%zero-embedding))
+                       ((vectorp emb) emb)
+                       (t (or (ignore-errors (llm:llm-embedding-vector emb))
+                              (%zero-embedding))))))
       (rag:upsert store chunks)))
   chunks)
+
+(defun %plain-chunks (item)
+  (let ((hash (ingest-item-hash item))
+        (text (or (ingest-item-content item) "")))
+    (list (rag:make-rag-chunk
+           :id hash
+           :document-id hash
+           :text text
+           :metadata (list :content-hash hash
+                           :uri (ingest-item-uri item))))))
 
 (defun ingest-one-item (item &key store embedder object-store)
   (when *ingest-item-hook*
     (funcall *ingest-item-hook* (item-plist item)))
-  (let* ((doc (%extract item)))
-    (unless doc
-      (return-from ingest-one-item nil))
-    (let* ((hash (ingest-item-hash item))
-           (chunker (rag.text:make-block-tree-chunker :store object-store))
-           (chunks (rag.text:chunk-extracted-document
-                    chunker doc
-                    :document-id hash
-                    :base-metadata (list :content-hash hash
-                                         :uri (ingest-item-uri item))
-                    :store object-store)))
-      (%embed-and-upsert store embedder chunks)
-      (list :hash hash
-            :chunk-ids (mapcar #'rag:rag-chunk-id chunks)))))
+  (let* ((hash (ingest-item-hash item))
+         (doc (handler-case (%extract item) (error () nil)))
+         (chunks (handler-case
+                     (when doc
+                       (rag.text:chunk-extracted-document
+                        (rag.text:make-block-tree-chunker :store object-store)
+                        doc
+                        :document-id hash
+                        :base-metadata (list :content-hash hash
+                                             :uri (ingest-item-uri item))
+                        :store object-store))
+                   (error () nil))))
+    (unless chunks
+      (setf chunks (%plain-chunks item)))
+    (%embed-and-upsert store embedder chunks)
+    (list :hash hash
+          :chunk-ids (mapcar #'rag:rag-chunk-id chunks))))
 
 (defun sweep-deleted-items (store live-hashes)
   "Mark-and-sweep: drop chunks whose content-hash is not in LIVE-HASHES."

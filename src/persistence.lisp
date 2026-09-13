@@ -5,27 +5,41 @@
 
 (defun %decoded-event-plist (data)
   "Normalize json-protocol/jzon object decode (vector or hash-table) to a plist
-   so TASK-PROTOCOL:EVENT-FROM-PLIST can rehydrate SQL journal payloads."
-  (cond
-    ((listp data) data)
-    ((hash-table-p data)
-     (let ((out '()))
-       (maphash (lambda (k v)
-                  (push (if (keywordp k)
-                            k
-                            (intern (string-upcase (string k)) :keyword))
-                        out)
-                  (push v out))
-                data)
-       (nreverse out)))
-    ((and (vectorp data) (evenp (length data)))
-     (loop for i from 0 below (length data) by 2
-           for k = (aref data i)
-           collect (if (keywordp k)
-                       k
-                       (intern (string-upcase (string k)) :keyword))
-           collect (aref data (1+ i))))
-    (t data)))
+   so TASK-PROTOCOL:EVENT-FROM-PLIST can rehydrate SQL journal payloads.
+   Walk nested values — board-step payloads are objects too."
+  (labels ((kw (k)
+             (cond
+               ((keywordp k) k)
+               ((symbolp k) (intern (symbol-name k) :keyword))
+               (t (intern (string-upcase (string k)) :keyword))))
+           (object-keys-p (seq)
+             (and (plusp (length seq))
+                  (evenp (length seq))
+                  (let ((k (if (vectorp seq) (aref seq 0) (first seq))))
+                    (or (stringp k) (symbolp k)))))
+           (walk (x)
+             (cond
+               ((hash-table-p x)
+                (let ((out '()))
+                  (maphash (lambda (k v)
+                             (push (walk v) out)
+                             (push (kw k) out))
+                           x)
+                  out))
+               ((and (vectorp x) (not (stringp x)) (object-keys-p x))
+                (loop for i from 0 below (length x) by 2
+                      collect (kw (aref x i))
+                      collect (walk (aref x (1+ i)))))
+               ((and (vectorp x) (not (stringp x)))
+                (map 'list #'walk x))
+               ((and (consp x) (object-keys-p x))
+                (loop for (k v) on x by #'cddr
+                      collect (kw k)
+                      collect (walk v)))
+               ((consp x)
+                (cons (walk (car x)) (walk (cdr x))))
+               (t x))))
+    (walk data)))
 
 (defvar *event-from-plist-compat* nil)
 
