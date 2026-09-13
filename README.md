@@ -5,7 +5,8 @@ Product core for [cl-stack](https://github.com/egao1980/cl-stack) expert systems
 | System | Role |
 |--------|------|
 | `demiurge` (`stack-demiurge`) 0.3.0 | `expert-domain`, `defexpert`, `agent-ks`, controller, personal profile |
-| `demiurge/improve` 0.2.0 | Versioned-KS improvement cycle |
+| `demiurge/improve` 0.3.0 | Versioned-KS improvement cycle |
+| `demiurge/observe` 0.3.0 | Span/metric taxonomy, `/healthz` + `/readyz`, profiles |
 | `demiurge/serve` 0.3.0 | MCP / A2A / AG-UI Clack app + feedback |
 | `demiurge/ingest` 0.3.0 | Durable file / IMAP / object-store ingest |
 
@@ -28,7 +29,7 @@ Product core for [cl-stack](https://github.com/egao1980/cl-stack) expert systems
 
 **Personal profile:** `(make-personal-profile &key data-dir)` — SQLite sessions + journal, `rag-backend-text` + memory/sql store, LLM catalog (llama-cpp or LM Studio from config).
 
-**Serve** (`demiurge/serve`): `(make-expert-app domain profile)` is a Clack dispatcher (AG-UI POST→SSE, `/feedback`, `/healthz`, `/readyz` stub via `*readyz-fn*` / `domain-ready-p`). `(serve-expert domain &key transports)` starts stdio-MCP and/or HTTP. Feedback (`demiurge.feedback` / MCP `record_feedback`) calls `eval-protocol:add-case` with `:source :human-feedback`.
+**Serve** (`demiurge/serve`): `(make-expert-app domain profile)` is a Clack dispatcher (AG-UI POST→SSE, `/feedback`, `/healthz`, `/readyz`). `/readyz` mounts `demiurge/observe` when that system is loaded and the profile has stores; otherwise the stub (`*readyz-fn*` / `domain-ready-p`). `(serve-expert domain &key transports)` starts stdio-MCP and/or HTTP. Feedback (`demiurge.feedback` / MCP `record_feedback`) calls `eval-protocol:add-case` with `:source :human-feedback`.
 
 **Ingest** (`demiurge/ingest`): `(run-ingest domain source &key store)` is a durable task. `file-source` (pathlib glob), `imap-source`, `s3-source` enumerate items with a content-hash idempotency key; extract → `chunk-extracted-document` / `block-tree-chunker` → embed/upsert; mark-and-sweep drops hashes the source no longer lists.
 
