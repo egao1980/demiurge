@@ -53,12 +53,7 @@
          :message message))
 
 (defun %parse-manifest-plist (plist)
-  (schema:parse 'expert-bundle-manifest
-                (if (and (consp plist) (keywordp (first plist)))
-                    plist
-                    (if (and (consp plist) (consp (first plist)))
-                        plist
-                        plist))))
+  (schema:parse 'expert-bundle-manifest plist :coerce t))
 
 (defun %try-manifest-from-octets (octets)
   (handler-case

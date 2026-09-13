@@ -236,13 +236,14 @@
                                                       (%infer-format-name
                                                        (ingest:ingest-item-uri item))))))))
                       (push (cons ref text) pairs)))
+                  (setf pairs (nreverse pairs))
                   (cons (make-bundle-corpus-source
                          :kind "file"
                          :spec (%prin1-string (list :root (namestring root)
                                                     :pattern "*"
                                                     :recursive t))
-                         :items (mapcar #'car (nreverse pairs)))
-                        (nreverse pairs)))))
+                         :items (mapcar #'car pairs))
+                        pairs))))
 
 (defun %checksum-annotation (entries)
   (format nil "~{~a~^;~}"
