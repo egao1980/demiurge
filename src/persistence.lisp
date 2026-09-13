@@ -62,7 +62,7 @@
          journal)))))
 
 (defun attach-domain-journal (blackboard journal &key domain task-id)
-  "Attach JOURNAL as the blackboard-protocol/journal spine of BLACKBOARD."
+  "Attach JOURNAL as the blackboard-journal spine of BLACKBOARD."
   (let* ((id (or task-id
                  (and domain (domain-task-id domain))
                  "blackboard"))

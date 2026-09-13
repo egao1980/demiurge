@@ -3,7 +3,7 @@
 `defexpert` is thin sugar over `make-instance` of `expert-domain` plus registry.
 KSAR control lives on the blackboard-protocol agenda — no polling loop.
 Section writes, KSAR enqueue, and workspace fork/merge are journaled through
-`task-protocol` via `blackboard-protocol/journal`. Replay is `replay-blackboard`.
+`task-protocol` via `blackboard-journal`. Replay is `replay-blackboard`.
 
 Logs use `log-protocol` `with-context` with `:trace-id` / `:span-id`. Never emit
 spans through the logger; spans are `telemetry-protocol` (`demiurge.ksar.execute`,

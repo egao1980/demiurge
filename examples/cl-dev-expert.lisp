@@ -130,7 +130,7 @@
         "no-critical-regression")
      (c "Which protocol is the RAG store surface?" "rag-protocol")
      (c "Which protocol is the LLM generate surface?" "llm-protocol")
-     (c "What subsystem persists the blackboard?" "blackboard-protocol/journal")
+     (c "What subsystem persists the blackboard?" "blackboard-journal")
      (c "Config facade for TOML + env?" "cl-stack-config")
      (c "Span name for KS execution?" "demiurge.ksar.execute")
      (c "Span name for an agent run?" "demiurge.agent.run")

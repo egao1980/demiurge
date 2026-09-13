@@ -4,7 +4,7 @@
   :author "egao1980"
   :license "MIT"
   :depends-on ("blackboard-protocol"
-               "blackboard-protocol/journal"
+               "blackboard-journal"
                "capability-protocol"
                "ai-agent-protocol"
                "ai-agent-protocol/mcp"

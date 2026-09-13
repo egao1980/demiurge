@@ -2,7 +2,7 @@
   (:use #:cl)
   (:nicknames #:stack-demiurge)
   (:local-nicknames (#:bb #:blackboard-protocol)
-                    (#:bbj #:blackboard-protocol/journal)
+                    (#:bbj #:blackboard-journal)
                     (#:cap #:capability-protocol)
                     (#:agent #:ai-agent-protocol)
                     (#:agent.mcp #:ai-agent-protocol/mcp)
