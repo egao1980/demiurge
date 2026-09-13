@@ -3,6 +3,69 @@
 (defvar *board-domains* (make-hash-table :test 'eq)
   "Root blackboard → EXPERT-DOMAIN.")
 
+(defun %decoded-event-plist (data)
+  "Normalize json-protocol/jzon object decode (vector or hash-table) to a plist
+   so TASK-PROTOCOL:EVENT-FROM-PLIST can rehydrate SQL journal payloads.
+   Walk nested values — board-step payloads are objects too."
+  (labels ((kw (k)
+             (cond
+               ((keywordp k) k)
+               ((symbolp k) (intern (symbol-name k) :keyword))
+               (t (intern (string-upcase (string k)) :keyword))))
+           (object-keys-p (seq)
+             (and (plusp (length seq))
+                  (evenp (length seq))
+                  (let ((k (if (vectorp seq) (aref seq 0) (first seq))))
+                    (or (stringp k) (symbolp k)))))
+           (name-value (k v)
+             (if (and (member k '(:key :triggered-key :watcher-id) :test #'eq)
+                      (or (stringp v) (symbolp v))
+                      (plusp (length (string v)))
+                      (not (find #\/ (string v))))
+                 (intern (string-upcase (string v)) :keyword)
+                 v))
+           (walk (x)
+             (cond
+               ((hash-table-p x)
+                (let ((out '()))
+                  (maphash (lambda (k v)
+                             (let ((kk (kw k)))
+                               (push (name-value kk (walk v)) out)
+                               (push kk out)))
+                           x)
+                  out))
+               ((and (vectorp x) (not (stringp x)) (object-keys-p x))
+                (loop for i from 0 below (length x) by 2
+                      for k = (kw (aref x i))
+                      collect k
+                      collect (name-value k (walk (aref x (1+ i))))))
+               ((and (vectorp x) (not (stringp x)))
+                (map 'list #'walk x))
+               ((and (consp x) (object-keys-p x))
+                (loop for (k v) on x by #'cddr
+                      for kk = (kw k)
+                      collect kk
+                      collect (name-value kk (walk v))))
+               ((consp x)
+                (cons (walk (car x)) (walk (cdr x))))
+               (t x))))
+    (walk data)))
+
+(defvar *event-from-plist-compat* nil)
+
+(defun %install-event-from-plist-compat ()
+  "B3 loads json-protocol (via serve/wire). task-protocol ENCODE-PAYLOAD then
+   prefers JSON; DECODE returns a string-key vector, not a plist. Wrap until
+   task-protocol accepts both."
+  (unless *event-from-plist-compat*
+    (let ((orig (fdefinition 'task-protocol:event-from-plist)))
+      (setf (fdefinition 'task-protocol:event-from-plist)
+            (lambda (data)
+              (funcall orig (%decoded-event-plist data))))
+      (setf *event-from-plist-compat* t))))
+
+(%install-event-from-plist-compat)
+
 (defun domain-task-id (domain)
   (format nil "domain/~a" (expert-name domain)))
 

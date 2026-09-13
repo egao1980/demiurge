@@ -4,7 +4,11 @@ Product core for [cl-stack](https://github.com/egao1980/cl-stack) expert systems
 
 | System | Role |
 |--------|------|
-| `demiurge` (`stack-demiurge`) 0.2.0 | `expert-domain`, `defexpert`, `agent-ks`, controller, personal profile |
+| `demiurge` (`stack-demiurge`) 0.3.1 | `expert-domain`, `defexpert`, `agent-ks`, controller, personal profile |
+| `demiurge/improve` 0.3.1 | Versioned-KS improvement cycle |
+| `demiurge/observe` 0.3.1 | Span/metric taxonomy, `/healthz` + `/readyz`, profiles |
+| `demiurge/serve` 0.3.1 | MCP / A2A / AG-UI Clack app + feedback |
+| `demiurge/ingest` 0.3.1 | Durable file / IMAP / object-store ingest |
 
 ```lisp
 (asdf:load-system "demiurge")
@@ -24,6 +28,10 @@ Product core for [cl-stack](https://github.com/egao1980/cl-stack) expert systems
 **Observe:** spans `demiurge.ksar.execute` / `demiurge.agent.run`. Logs use `log-protocol` `with-context` `:trace-id` / `:span-id`. Never emit spans through the logger.
 
 **Personal profile:** `(make-personal-profile &key data-dir)` — SQLite sessions + journal, `rag-backend-text` + memory/sql store, LLM catalog (llama-cpp or LM Studio from config).
+
+**Serve** (`demiurge/serve`): `(make-expert-app domain profile)` is a Clack dispatcher (AG-UI POST→SSE, `/feedback`, `/healthz`, `/readyz`). `/readyz` mounts `demiurge/observe` when that system is loaded and the profile has stores; otherwise the stub (`*readyz-fn*` / `domain-ready-p`). `(serve-expert domain &key transports)` starts stdio-MCP and/or HTTP. Feedback (`demiurge.feedback` / MCP `record_feedback`) calls `eval-protocol:add-case` with `:source :human-feedback`.
+
+**Ingest** (`demiurge/ingest`): `(run-ingest domain source &key store)` is a durable task. `file-source` (pathlib glob), `imap-source`, `s3-source` enumerate items with a content-hash idempotency key; extract → `chunk-extracted-document` / `block-tree-chunker` → embed/upsert; mark-and-sweep drops hashes the source no longer lists.
 
 **Reference experts:** `make-echo-expert` (minimal) and `make-cl-dev-expert` (lookup-symbol / search-corpus / `:compute`-gated run-tests, steering skills, docs corpus, ~20 eval cases).
 
