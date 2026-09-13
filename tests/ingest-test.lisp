@@ -13,6 +13,12 @@
 (defun %chunk-ids (store)
   (mapcar #'rag:rag-chunk-id (list-stored-chunks store)))
 
+(deftest as-string-list-coerces-json-vectors
+  "Enumerate journals a vector of hashes; JSON decode also yields a vector."
+  (ok (equal '("a" "b") (demiurge/ingest::%as-string-list #("a" "b"))))
+  (ok (equal '("a") (demiurge/ingest::%as-string-list "a")))
+  (ok (equal '("h1") (demiurge/ingest::%as-string-list '((:hash "h1"))))))
+
 (deftest file-source-enumerates-stable-hashes
   (with-tmp-dir (tmp)
     (let* ((dir (%write-corpus (merge-pathnames "c/" tmp)

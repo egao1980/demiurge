@@ -170,9 +170,39 @@
         (rag:delete-ids store (nreverse stale))))
     stale))
 
+(defun %as-string-list (value)
+  "Coerce a journaled enumerate result to hash strings.
+   JSON decode turns Lisp lists into vectors; a lone string is one hash."
+  (cond
+    ((null value) nil)
+    ((stringp value) (list value))
+    ((and (vectorp value) (not (stringp value)))
+     (map 'list (lambda (x)
+                  (cond
+                    ((stringp x) x)
+                    ((null x) nil)
+                    (t (princ-to-string x))))
+          value))
+    ((listp value)
+     (loop for x in value
+           collect (cond
+                     ((stringp x) x)
+                     ((null x) nil)
+                     ((consp x)
+                      (or (getf x :hash) (getf x :HASH)))
+                     (t (princ-to-string x)))))
+    (t nil)))
+
+(defun %killed-mid-corpus-p (condition)
+  (search "killed mid-corpus" (princ-to-string condition) :test #'char-equal))
+
 (defun run-ingest (domain source &key store journal task-id embedder
                                    object-store)
-  "Durable ingest. Per-item step idempotency key = content hash.
+  "Durable ingest. Per-item step name includes the content hash.
+   task-protocol also records each step under (name . nil); sharing the
+   name ingest-item makes item 2 replay item 1 (SEEN=1 on kill/resume).
+   Enumerate journals a vector of hash strings (JSON-safe; not a plist
+   alist). Content is always re-read from the live source.
    Sweep deletes stored hashes that the source no longer enumerates."
   (check-type domain expert-domain)
   (let* ((journal (%journal-for domain journal))
@@ -185,37 +215,36 @@
          (object-store (%object-store-for object-store))
          (result nil))
     (task:with-durable-task (task journal)
-      (let* ((plists (task:with-durable-step
-                         ("enumerate" :idempotency-key "ingest/enumerate")
-                       (mapcar #'item-plist (enumerate-items source))))
-             (chunk-ids '())
-             (hashes (mapcar (lambda (p) (getf p :hash)) plists)))
-        (dolist (plist plists)
-          (let* ((hash (or (getf plist :hash)
-                           (getf plist :HASH)))
-                 (recorded (handler-case
-                               (task:with-durable-step
-                                   ("ingest-item" :idempotency-key
-                                    (and hash (princ-to-string hash)))
-                                 (let ((got (ingest-one-item
-                                             (item-from-plist plist)
-                                             :store store
-                                             :embedder embedder
-                                             :object-store object-store)))
-                                   (dolist (id (getf got :chunk-ids))
-                                     (push (if (stringp id)
-                                               id
-                                               (princ-to-string id))
-                                           chunk-ids))
-                                   (or (and hash (princ-to-string hash))
-                                       t)))
-                             (error (c)
-                               (when (search "killed mid-corpus"
-                                             (princ-to-string c)
-                                             :test #'char-equal)
-                                 (error c))
-                               nil))))
-            (declare (ignore recorded))))
+      (let* ((live (enumerate-items source))
+             (hashes (remove nil
+                             (%as-string-list
+                              (task:with-durable-step
+                                  ("enumerate" :idempotency-key
+                                   "ingest/enumerate")
+                                (map 'vector #'ingest-item-hash live)))))
+             (chunk-ids '()))
+        (dolist (hash hashes)
+          (let ((item (find hash live :key #'ingest-item-hash :test #'equal)))
+            (when item
+              (handler-case
+                  (task:with-durable-step
+                      ((format nil "ingest-item/~a" hash)
+                       :idempotency-key hash)
+                    (let ((got (ingest-one-item
+                                item
+                                :store store
+                                :embedder embedder
+                                :object-store object-store)))
+                      (dolist (id (getf got :chunk-ids))
+                        (push (if (stringp id)
+                                  id
+                                  (princ-to-string id))
+                              chunk-ids))
+                      hash))
+                (error (c)
+                  (when (%killed-mid-corpus-p c)
+                    (error c))
+                  nil)))))
         (let ((swept (task:with-durable-step
                          ("sweep" :idempotency-key "ingest/sweep")
                        (sweep-deleted-items store hashes))))
