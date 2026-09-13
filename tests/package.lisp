@@ -1,5 +1,5 @@
 (defpackage #:demiurge/tests
-  (:use #:cl #:rove #:demiurge #:demiurge/improve)
+  (:use #:cl #:rove #:demiurge #:demiurge/improve #:demiurge/observe)
   (:shadowing-import-from #:demiurge #:run-tests)
   (:local-nicknames (#:bb #:blackboard-protocol)
                     (#:cap #:capability-protocol)
@@ -9,6 +9,9 @@
                     (#:steer #:steer-protocol)
                     (#:eval #:eval-protocol)
                     (#:task #:task-protocol)
-                    (#:tel #:telemetry-protocol)))
+                    (#:tel #:telemetry-protocol)
+                    (#:log #:log-protocol)
+                    (#:rag #:rag-protocol)
+                    (#:obs #:demiurge/observe)))
 
 (in-package #:demiurge/tests)

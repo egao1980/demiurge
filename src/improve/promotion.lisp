@@ -15,14 +15,25 @@
        :body text))))
 
 (defun emit-promotion-metric (&key cycle-id eval-run-id verdict)
-  (ignore-errors
-    (tel:record-metric tel:*telemetry-backend*
-                       "demiurge.improve.promotion"
-                       1
-                       :attributes (list :cycle-id cycle-id
-                                         :eval-run-id eval-run-id
-                                         :verdict verdict)
-                       :unit "1"))
+  (let* ((pkg (find-package '#:demiurge/observe))
+         (name (cond
+                 ((and pkg (eq verdict :demote)
+                       (find-symbol "+METRIC-IMPROVE-DEMOTIONS+" pkg)
+                       (boundp (find-symbol "+METRIC-IMPROVE-DEMOTIONS+" pkg)))
+                  (symbol-value (find-symbol "+METRIC-IMPROVE-DEMOTIONS+" pkg)))
+                 ((and pkg (find-symbol "+METRIC-IMPROVE-PROMOTIONS+" pkg)
+                       (boundp (find-symbol "+METRIC-IMPROVE-PROMOTIONS+" pkg)))
+                  (symbol-value (find-symbol "+METRIC-IMPROVE-PROMOTIONS+" pkg)))
+                 ((eq verdict :demote) "demiurge.improve.demotions")
+                 (t "demiurge.improve.promotions"))))
+    (ignore-errors
+      (tel:record-metric tel:*telemetry-backend*
+                         name
+                         1
+                         :attributes (list :cycle-id cycle-id
+                                           :eval-run-id eval-run-id
+                                           :verdict verdict)
+                         :unit "1")))
   t)
 
 (defun record-improve-decision (blackboard provenance)
