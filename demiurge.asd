@@ -1,5 +1,5 @@
 (defsystem "demiurge"
-  :version "0.3.2"
+  :version "0.3.3"
   :description "Self-improving expert-system core for cl-stack (defexpert + agent-ks + controller)"
   :author "egao1980"
   :license "MIT"
@@ -31,7 +31,8 @@
                            "demiurge/observe"
                            "demiurge/serve"
                            "demiurge/ingest"
-                           "demiurge/workflows")
+                           "demiurge/workflows"
+                           "demiurge/bundle")
                 :ci (:with ("event-backend-libuv"
                             "sql-backend-sqlite3"
                             "log-backend-log4cl"
@@ -53,7 +54,7 @@
   :in-order-to ((test-op (test-op "demiurge/tests"))))
 
 (defsystem "demiurge/improve"
-  :version "0.3.2"
+  :version "0.3.3"
   :description "Self-improvement cycle for demiurge (versioned-ks + eval gates)"
   :author "egao1980"
   :license "MIT"
@@ -67,7 +68,7 @@
                (:file "cycle")))
 
 (defsystem "demiurge/observe"
-  :version "0.3.2"
+  :version "0.3.3"
   :description "Observability subsystem: span/metric taxonomy, health, profiles"
   :author "egao1980"
   :license "MIT"
@@ -82,7 +83,7 @@
                (:file "profiles")))
 
 (defsystem "demiurge/serve"
-  :version "0.3.2"
+  :version "0.3.3"
   :description "Serve an expert-domain over MCP / A2A / AG-UI"
   :author "egao1980"
   :license "MIT"
@@ -106,7 +107,7 @@
                (:file "app")))
 
 (defsystem "demiurge/ingest"
-  :version "0.3.2"
+  :version "0.3.3"
   :description "Durable corpus ingest for demiurge (file / IMAP / object-store)"
   :author "egao1980"
   :license "MIT"
@@ -124,7 +125,7 @@
                (:file "pipeline")))
 
 (defsystem "demiurge/workflows"
-  :version "0.3.2"
+  :version "0.3.3"
   :description "Durable project workflows and deep-research fan-out"
   :author "egao1980"
   :license "MIT"
@@ -144,9 +145,34 @@
                (:file "project")
                (:file "deep-research")))
 
+(defsystem "demiurge/bundle"
+  :version "0.3.3"
+  :description "Expert-bundle packaging and distribution (OCI layout + install)"
+  :author "egao1980"
+  :license "MIT"
+  :depends-on ("demiurge"
+               "demiurge/ingest"
+               "schema-protocol"
+               "steer-protocol"
+               "eval-protocol"
+               "task-protocol"
+               "doc-extract-protocol"
+               "llm-protocol"
+               "rag-protocol"
+               "capability-protocol"
+               "blackboard-protocol"
+               "ai-agent-protocol")
+  :serial t
+  :pathname "src/bundle"
+  :components ((:file "package")
+               (:file "manifest")
+               (:file "pack")
+               (:file "install")))
+
 (defsystem "demiurge/tests"
   :depends-on ("demiurge" "demiurge/improve" "demiurge/observe"
                "demiurge/serve" "demiurge/ingest" "demiurge/workflows"
+               "demiurge/bundle"
                "llm-protocol" "event-backend-libuv"
                "sql-backend-sqlite3" "rove")
   :pathname "tests"
@@ -161,7 +187,8 @@
                (:file "observe-test")
                (:file "serve-test")
                (:file "ingest-test")
-               (:file "workflows-test"))
+               (:file "workflows-test")
+               (:file "bundle-test"))
   :perform (test-op (o c)
              (unless (symbol-call :rove :run c)
                (error "tests failed for ~A" (component-name c)))))

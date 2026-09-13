@@ -4,12 +4,13 @@ Product core for [cl-stack](https://github.com/egao1980/cl-stack) expert systems
 
 | System | Role |
 |--------|------|
-| `demiurge` (`stack-demiurge`) 0.3.2 | `expert-domain`, `defexpert`, `agent-ks`, controller, personal profile |
-| `demiurge/improve` 0.3.2 | Versioned-KS improvement cycle |
-| `demiurge/observe` 0.3.2 | Span/metric taxonomy, `/healthz` + `/readyz`, profiles |
-| `demiurge/serve` 0.3.2 | MCP / A2A / AG-UI Clack app + feedback |
-| `demiurge/ingest` 0.3.2 | Durable file / IMAP / object-store ingest |
-| `demiurge/workflows` 0.3.2 | Durable project workflows + deep-research fan-out |
+| `demiurge` (`stack-demiurge`) 0.3.3 | `expert-domain`, `defexpert`, `agent-ks`, controller, personal profile |
+| `demiurge/improve` 0.3.3 | Versioned-KS improvement cycle |
+| `demiurge/observe` 0.3.3 | Span/metric taxonomy, `/healthz` + `/readyz`, profiles |
+| `demiurge/serve` 0.3.3 | MCP / A2A / AG-UI Clack app + feedback |
+| `demiurge/ingest` 0.3.3 | Durable file / IMAP / object-store ingest |
+| `demiurge/workflows` 0.3.3 | Durable project workflows + deep-research fan-out |
+| `demiurge/bundle` 0.3.3 | Expert-bundle pack / hash-verified install / rollback (local OCI layout) |
 
 ```lisp
 (asdf:load-system "demiurge")
@@ -35,6 +36,8 @@ Product core for [cl-stack](https://github.com/egao1980/cl-stack) expert systems
 **Ingest** (`demiurge/ingest`): `(run-ingest domain source &key store)` is a durable task. `file-source` (pathlib glob), `imap-source`, `s3-source` enumerate items with a content-hash idempotency key; extract → `chunk-extracted-document` / `block-tree-chunker` → embed/upsert; mark-and-sweep drops hashes the source no longer lists.
 
 **Workflows** (`demiurge/workflows`): `(start-project domain spec)` is a named `task-protocol` tree bound to one board. Milestones are `milestone-reached` journal checkpoints plus durable `wait-input` (`await-approval`). `(run-deep-research domain question &key max-rounds budget)` plans (schema-typed) → `spawn-child-task` per sub-question (RAG + `search-web` + optional browser) → `join-children :policy :all` → bounded gap rounds → C3d `extracted-document` with citation annotations → A1 eval gate → C3e markdown (PDF if loaded). Progress writes a board section and, when serve/wire is loaded, A2A task state + AG-UI `STATE_DELTA`.
+
+**Bundle** (`demiurge/bundle`): `(pack-expert domain &key registry version)` writes a local OCI layout (`oci-layout` + `index.json` + `blobs/sha256/…`) with checksum annotations (cosign slot reserved). `(install-expert ref &key profile)` is a durable task: pull → verify every content hash (`bundle-verification-error` on mismatch; no `skip-verification` restart) → register domain → `run-ingest` as child durable steps with unique `ingest-item/<hash>` names. `(rollback-expert name version)` re-registers the prior manifest and `rollback-skill` on the A4/`steer-protocol` file skill store.
 
 **Reference experts:** `make-echo-expert` (minimal) and `make-cl-dev-expert` (lookup-symbol / search-corpus / `:compute`-gated run-tests, steering skills, docs corpus, ~20 eval cases).
 
