@@ -216,31 +216,44 @@
         (string-downcase (subseq s (1+ dot)))
         "txt")))
 
+(defun %regular-files (root)
+  "Recursive regular files under ROOT. Skips dotfiles.
+   Avoids pathlib glob \"*\" → :name/:type :wild, which picks extras on Linux."
+  (let ((root (uiop:ensure-directory-pathname root))
+        (acc '()))
+    (labels ((walk (dir)
+               (dolist (f (ignore-errors (uiop:directory-files dir)))
+                 (let ((name (file-namestring f)))
+                   (when (and name (plusp (length name))
+                              (char/= (char name 0) #\.))
+                     (push f acc))))
+               (dolist (sub (ignore-errors (uiop:subdirectories dir)))
+                 (let ((base (car (last (pathname-directory sub)))))
+                   (unless (and (stringp base) (plusp (length base))
+                                (char= (char base 0) #\.))
+                     (walk sub))))))
+      (when (uiop:directory-exists-p root)
+        (walk root)))
+    (nreverse acc)))
+
 (defun %collect-corpus (domain)
   "→ list of (corpus-source . list of (item . text))."
   (loop for root in (%corpus-roots domain)
-        collect (let* ((source (ingest:make-file-source :root root :pattern "*"
-                                                       :recursive t))
-                       (pairs '()))
-                  (dolist (item (ingest:enumerate-items source))
-                    (let* ((text (or (ingest:ingest-item-content item) ""))
-                           (digest (or (ingest:ingest-item-hash item)
-                                       (%content-digest text)))
+        collect (let ((pairs '()))
+                  (dolist (path (%regular-files root))
+                    (let* ((octets (%read-octets path))
+                           (text (%octets-string octets))
+                           (digest (%content-digest octets))
+                           (uri (namestring path))
                            (ref (make-bundle-corpus-item
-                                 :uri (or (ingest:ingest-item-uri item)
-                                          (ingest:ingest-item-id item)
-                                          "")
+                                 :uri uri
                                  :digest digest
-                                 :format (string-downcase
-                                          (string (or (ingest:ingest-item-format item)
-                                                      (%infer-format-name
-                                                       (ingest:ingest-item-uri item))))))))
+                                 :format (%infer-format-name uri))))
                       (push (cons ref text) pairs)))
                   (setf pairs (nreverse pairs))
                   (cons (make-bundle-corpus-source
                          :kind "file"
                          :spec (%prin1-string (list :root (namestring root)
-                                                    :pattern "*"
                                                     :recursive t))
                          :items (mapcar #'car pairs))
                         pairs))))
@@ -350,7 +363,7 @@
                     :corpus-sources (mapcar #'car corpus)
                     :cycle-ids cycle-ids
                     :eval-run-ids eval-run-ids))
-         (manifest-text (%prin1-string (schema:dump manifest :as :plist)))
+         (manifest-text (%manifest-text manifest))
          (layers '()))
     (ensure-directories-exist layout)
     (push (%put-blob layout manifest-text
@@ -380,7 +393,7 @@
     (let* ((checksums (%checksum-annotation layers))
            (ann (format nil "~a;~a=" checksums +cosign-annotation-key+)))
       (setf (expert-bundle-manifest-annotations manifest) ann)
-      (let ((updated (%prin1-string (schema:dump manifest :as :plist))))
+      (let ((updated (%manifest-text manifest)))
         (setf (first layers)
               (%put-blob layout updated
                          :media-type

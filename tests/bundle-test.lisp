@@ -25,6 +25,32 @@
                      (format nil "~a/SKILL.md" name)
                      (uiop:ensure-directory-pathname store-root))))
 
+(deftest packed-manifest-blob-is-readable
+  "schema:dump :as :plist embeds hash-tables; the OCI blob must PRINT/READ."
+  (let* ((m (make-expert-bundle-manifest
+             :name "round"
+             :version "1.2.3"
+             :skill-refs (list (make-bundle-skill-ref
+                                :name "s" :version "1" :digest "abc"))
+             :corpus-sources
+             (list (make-bundle-corpus-source
+                    :items (list (make-bundle-corpus-item
+                                  :uri "a.md" :digest "def"))))))
+         (text (demiurge/bundle::%manifest-text m))
+         (parsed (demiurge/bundle::%parse-manifest-plist
+                  (demiurge/bundle::%read-sexp text))))
+    (ok (not (search "#<" text))
+        "manifest text must not contain unreadable #<HASH-TABLE>")
+    (ok (equal "round" (expert-bundle-manifest-name parsed)))
+    (ok (equal "1.2.3" (expert-bundle-manifest-version parsed)))
+    (ok (equal "1" (bundle-skill-ref-version
+                    (first (expert-bundle-manifest-skill-refs parsed))))
+        "nested skill-ref keys must not be swapped by hash-table conversion")
+    (ok (equal "def" (bundle-corpus-item-digest
+                      (first (bundle-corpus-source-items
+                              (first (expert-bundle-manifest-corpus-sources
+                                      parsed)))))))))
+
 (deftest pack-install-round-trip
   "pack→install against a local OCI layout; installed echo-expert is runnable."
   (with-clean-registry
@@ -58,6 +84,9 @@
           (ok (uiop:directory-files
                (merge-pathnames "blobs/sha256/" layout)))
           (ok (expert-bundle-manifest-p (getf packed :manifest)))
+          (ok (expert-bundle-manifest-p
+               (demiurge/bundle::%load-manifest-from-layout layout))
+              "OCI manifest blob must PRINT/READ after pack")
           (clear-expert-registry)
           (let ((result (install-expert packed
                                         :journal journal

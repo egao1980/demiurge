@@ -6,7 +6,7 @@
 (defun record-bundle-install (name version manifest layout)
   (let ((rec (list :name (%install-key name)
                    :version (string version)
-                   :manifest (schema:dump manifest :as :plist)
+                   :manifest (%readable-value manifest)
                    :layout (namestring (uiop:ensure-directory-pathname layout))
                    :skill-refs (mapcar (lambda (r)
                                          (list :name (bundle-skill-ref-name r)
@@ -53,23 +53,60 @@
          :message message))
 
 (defun %parse-manifest-plist (plist)
-  (schema:parse 'expert-bundle-manifest plist :coerce t))
+  (schema:parse 'expert-bundle-manifest (%jsonish-to-lisp plist) :coerce t))
+
+(defun %manifest-sexp-p (sexp)
+  (let ((body (%jsonish-to-lisp sexp)))
+    (and (consp body)
+         (or (getf body :name) (getf body :catalogue-vocab)
+             (getf body :ks-definitions) (getf body :skill-refs)))))
+
+(defun %parse-manifest-octets (octets)
+  "Parse OCTETS as an expert-bundle-manifest. Signals on failure."
+  (let ((sexp (%read-sexp (%octets-string octets))))
+    (unless (%manifest-sexp-p sexp)
+      (error 'bundle-error
+             :message "octets are not a readable expert-bundle-manifest"))
+    (%parse-manifest-plist sexp)))
 
 (defun %try-manifest-from-octets (octets)
-  (handler-case
-      (let ((sexp (%read-sexp (%octets-string octets))))
-        (when (and (consp sexp) (keywordp (first sexp))
-                   (or (getf sexp :name) (getf sexp :catalogue-vocab)
-                       (getf sexp :ks-definitions) (getf sexp :skill-refs)))
-          (%parse-manifest-plist sexp)))
+  (handler-case (%parse-manifest-octets octets)
     (error () nil)))
 
+(defun %json-string-field (json key)
+  "Pull a JSON string field. Digests have no escapes."
+  (let* ((needle (format nil "\"~a\"" key))
+         (pos (search needle json)))
+    (when pos
+      (let* ((colon (position #\: json :start (+ pos (length needle))))
+             (q1 (and colon (position #\" json :start (1+ colon)))))
+        (when q1
+          (let ((q2 (position #\" json :start (1+ q1))))
+            (when q2 (subseq json (1+ q1) q2))))))))
+
+(defun %strip-sha256-prefix (digest)
+  (let ((s (or digest "")))
+    (if (and (>= (length s) 7) (string-equal "sha256:" s :end2 7))
+        (subseq s 7)
+        s)))
+
+(defun %manifest-digest-from-index (layout)
+  (let ((path (merge-pathnames "index.json"
+                               (uiop:ensure-directory-pathname layout))))
+    (when (probe-file path)
+      (%strip-sha256-prefix
+       (%json-string-field (uiop:read-file-string path)
+                           "io.demiurge.bundle.manifest")))))
+
 (defun %load-manifest-from-layout (layout)
-  (or (loop for path in (%blob-files layout)
-            for manifest = (%try-manifest-from-octets (%read-octets path))
-            when manifest return manifest)
-      (error 'bundle-error
-             :message (format nil "no expert-bundle-manifest in ~s" layout))))
+  (let ((digest (%manifest-digest-from-index layout)))
+    (or (when (and digest (plusp (length digest)))
+          (%parse-manifest-octets (%blob-by-digest layout digest)))
+        (loop for path in (%blob-files layout)
+              for manifest = (%try-manifest-from-octets (%read-octets path))
+              when manifest return manifest)
+        (error 'bundle-error
+               :message (format nil "no expert-bundle-manifest in ~s" layout)))))
 
 (defun %blob-by-digest (layout digest)
   (let ((path (%blob-path layout digest)))
@@ -229,13 +266,32 @@
      :eval-suites (or eval-suites (%datasets-from-manifest manifest))
      :profile (or profile :personal))))
 
+(defclass %item-list-source (ingest:ingest-source)
+  ((items :initarg :items :accessor %item-list-source-items)))
+
+(defmethod ingest:enumerate-items ((source %item-list-source))
+  (copy-list (%item-list-source-items source)))
+
+(defun %ingest-items-from-dir (dir)
+  "Snapshot files only — no pathlib glob \"*\" (extra matches on Linux)."
+  (loop for path in (%regular-files dir)
+        collect (let* ((octets (%read-octets path))
+                       (ns (namestring path)))
+                  (ingest:make-ingest-item
+                   :id ns
+                   :uri ns
+                   :content (%octets-string octets)
+                   :hash (%content-digest octets)
+                   :format (intern (string-upcase (%infer-format-name ns))
+                                   :keyword)))))
+
 (defun %ingest-sources (domain dirs &key store journal task-id embedder)
   "Run demiurge/ingest:run-ingest per snapshot dir. Unique ingest task ids."
   (let ((results '()))
     (loop for dir in dirs
           for i from 0
-          for source = (ingest:make-file-source :root dir :pattern "*"
-                                                :recursive t)
+          for source = (make-instance '%item-list-source
+                                      :items (%ingest-items-from-dir dir))
           for id = (format nil "~a/dir-~d" (or task-id "ingest") i)
           do (push (ingest:run-ingest domain source
                                       :store store
@@ -277,7 +333,7 @@
              (manifest (task:with-durable-step
                            ("verify" :idempotency-key "bundle/verify")
                          (let ((m (verify-bundle-layout pulled)))
-                           (schema:dump m :as :plist))))
+                           (%readable-value m))))
              (manifest (if (expert-bundle-manifest-p manifest)
                            manifest
                            (%parse-manifest-plist manifest)))

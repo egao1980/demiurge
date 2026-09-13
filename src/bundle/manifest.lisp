@@ -119,6 +119,51 @@
           (read-from-string string)))
       default))
 
+(defun %as-keyword (key)
+  (cond
+    ((keywordp key) key)
+    ((symbolp key) (intern (symbol-name key) :keyword))
+    ((stringp key) (intern (string-upcase key) :keyword))
+    (t key)))
+
+(defun %plist-shaped-p (value)
+  (and (consp value)
+       (evenp (length value))
+       (loop for (k v) on value by #'cddr
+             always (or (keywordp k) (symbolp k) (stringp k)))))
+
+(defun %jsonish-to-lisp (value)
+  "Coerce dump / journal / JSON-ish trees to keyword plists and lists.
+   Vectors (JSON arrays) and hash-tables (nested schema:dump) become Lisp.
+   Do not NREVERSE a list* plist — that swaps keys and values."
+  (cond
+    ((hash-table-p value)
+     (let ((acc '()))
+       (maphash (lambda (k v)
+                  (setf acc (list* (%as-keyword k) (%jsonish-to-lisp v) acc)))
+                value)
+       acc))
+    ((and (vectorp value) (not (stringp value)))
+     (map 'list #'%jsonish-to-lisp value))
+    ((%plist-shaped-p value)
+     (loop for (k v) on value by #'cddr
+           append (list (%as-keyword k) (%jsonish-to-lisp v))))
+    ((consp value)
+     (mapcar #'%jsonish-to-lisp value))
+    (t value)))
+
+(defun %readable-value (value)
+  "schema:dump :as :plist still embeds hash-tables for nested objects.
+   Those print as #<HASH-TABLE> and cannot be READ back from an OCI blob."
+  (cond
+    ((and (typep value 'standard-object)
+          (schema:schema-class-p (class-of value)))
+     (%readable-value (schema:dump value :as :plist)))
+    (t (%jsonish-to-lisp value))))
+
+(defun %manifest-text (manifest)
+  (%prin1-string (%readable-value manifest)))
+
 (defun make-bundle-skill-ref (&key name (version "") (digest "")
                                 (media-type "text/markdown"))
   (make-instance 'bundle-skill-ref
