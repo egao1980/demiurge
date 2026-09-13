@@ -70,6 +70,8 @@
    #:profile-rag-store
    #:profile-llm-catalog
    #:profile-default-model
+   #:profile-skill-store
+   #:profile-require-hitl-p
 
    #:expert-domain
    #:expert-domain-p

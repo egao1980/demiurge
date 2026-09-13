@@ -1,5 +1,5 @@
 (defpackage #:demiurge/tests
-  (:use #:cl #:rove #:demiurge)
+  (:use #:cl #:rove #:demiurge #:demiurge/improve)
   (:shadowing-import-from #:demiurge #:run-tests)
   (:local-nicknames (#:bb #:blackboard-protocol)
                     (#:cap #:capability-protocol)

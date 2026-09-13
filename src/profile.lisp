@@ -11,7 +11,11 @@
    (rag-store :initarg :rag-store :accessor profile-rag-store :initform nil)
    (llm-catalog :initarg :llm-catalog :accessor profile-llm-catalog :initform nil)
    (default-model :initarg :default-model :accessor profile-default-model
-                  :initform nil)))
+                  :initform nil)
+   (skill-store :initarg :skill-store :accessor profile-skill-store
+                :initform nil)
+   (require-hitl-p :initarg :require-hitl-p :accessor profile-require-hitl-p
+                   :initform nil)))
 
 (defun deployment-profile-p (x)
   (typep x 'deployment-profile))
@@ -102,7 +106,8 @@
       (rag-backend-memory:make-memory-vector-store)))
 
 (defun make-personal-profile (&key data-dir config journal session-store
-                                chunker rag-store llm-catalog default-model)
+                                chunker rag-store llm-catalog default-model
+                                skill-store (require-hitl-p nil))
   "SQLite sessions + journal, file corpora (text splitter + memory/sql store),
    LLM catalog from CONFIG (llama-cpp or LM Studio). Zero external services."
   (let* ((cfg (or config (current-demiurge-config)))
@@ -129,4 +134,6 @@
                                    (merge-pathnames "rag.sqlite" root)))
                    :llm-catalog (or llm-catalog (%build-llm-catalog cfg))
                    :default-model (or default-model
-                                      (demiurge-config-llm-default-model cfg)))))
+                                      (demiurge-config-llm-default-model cfg))
+                   :skill-store skill-store
+                   :require-hitl-p require-hitl-p)))

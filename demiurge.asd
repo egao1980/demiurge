@@ -44,8 +44,22 @@
                (:file "cl-dev-expert" :pathname "../examples/cl-dev-expert"))
   :in-order-to ((test-op (test-op "demiurge/tests"))))
 
+(defsystem "demiurge/improve"
+  :version "0.2.0"
+  :description "Self-improvement cycle for demiurge (versioned-ks + eval gates)"
+  :author "egao1980"
+  :license "MIT"
+  :depends-on ("demiurge" "schema-protocol")
+  :serial t
+  :pathname "src/improve"
+  :components ((:file "package")
+               (:file "versioned-ks")
+               (:file "sandbox")
+               (:file "promotion")
+               (:file "cycle")))
+
 (defsystem "demiurge/tests"
-  :depends-on ("demiurge" "llm-protocol" "event-backend-libuv"
+  :depends-on ("demiurge" "demiurge/improve" "llm-protocol" "event-backend-libuv"
                "sql-backend-sqlite3" "rove")
   :pathname "tests"
   :serial t
@@ -54,7 +68,8 @@
                (:file "protocol-test")
                (:file "restarts-test")
                (:file "config-test")
-               (:file "persistence-test"))
+               (:file "persistence-test")
+               (:file "improve-test"))
   :perform (test-op (o c)
              (unless (symbol-call :rove :run c)
                (error "tests failed for ~A" (component-name c)))))
