@@ -17,7 +17,10 @@
                     (#:task #:task-protocol)
                     (#:tbsql #:task-backend-sql)
                     (#:tel #:telemetry-protocol)
-                    (#:cfg #:cl-stack-config))
+                    (#:cfg #:cl-stack-config)
+                    (#:oauth2 #:cl-stack-oauth2)
+                    (#:jwt #:cl-stack-jwt)
+                    (#:ldap #:ldap-protocol))
   (:export
    #:demiurge-error
    #:demiurge-error-message
@@ -28,6 +31,15 @@
    #:missing-event-backend
    #:compute-denied
    #:persistence-error
+   #:capability-denied
+   #:capability-denied-capability
+   #:capability-denied-operation
+   #:capability-denied-principal
+   #:capability-denied-tenant
+   #:tenant-isolation-error
+   #:tenant-isolation-expected
+   #:tenant-isolation-actual
+   #:tenant-isolation-reference
    #:call-with-demiurge-restarts
    #:with-demiurge-restarts
    #:invoke-retry
@@ -46,6 +58,15 @@
    #:demiurge-config-llm-catalog
    #:demiurge-config-paths-data-dir
    #:demiurge-config-improve-enabled
+   #:demiurge-config-corporate-oidc-issuer
+   #:demiurge-config-corporate-oidc-client-id
+   #:demiurge-config-corporate-ldap-url
+   #:demiurge-config-corporate-ldap-base-dn
+   #:demiurge-config-corporate-ldap-group-role-map
+   #:demiurge-config-corporate-postgres-dsn
+   #:demiurge-config-corporate-otlp-endpoint
+   #:demiurge-config-corporate-tenant-id
+   #:demiurge-config-corporate-role-grants
 
    #:call-with-ksar-observe
    #:call-with-agent-observe
@@ -61,6 +82,10 @@
    #:personal-profile
    #:personal-profile-p
    #:make-personal-profile
+   #:corporate-profile
+   #:corporate-profile-p
+   #:make-corporate-profile
+   #:profile-tenant
    #:profile-kind
    #:profile-data-dir
    #:profile-config
@@ -124,7 +149,33 @@
    #:cl-dev-expert
    #:lookup-symbol
    #:search-corpus
-   #:run-tests)
+   #:run-tests
+
+   #:*tenant*
+   #:current-tenant
+   #:with-tenant
+   #:tenant-scope
+   #:tenant-of-reference
+   #:assert-tenant-scope
+   #:tenant-session-id
+   #:tenant-task-id
+   #:tenant-corpus-name
+   #:tenant-budget-scope
+   #:*principal*
+   #:*principal-roles*
+   #:*principal-catalogue*
+   #:*capability-denial-audit*
+   #:make-principal-catalogue
+   #:filter-catalogue-for-roles
+   #:role-allowed-ops
+   #:operation-granted-p
+   #:catalogue-for-request
+   #:ldap-groups-for-dn
+   #:map-groups-to-roles
+   #:wrap-corporate-auth
+   #:parse-postgres-dsn
+   #:postgres-claimable-lease-sql
+   #:claim-task-postgres)
   (:documentation
    "Expert-domain model + KSAR controller. Persistence is the task-protocol journal."))
 

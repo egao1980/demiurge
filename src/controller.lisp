@@ -29,7 +29,7 @@
                :store (profile-session-store profile)
                :window-size (demiurge-config-session-window-turns
                              (%config-for domain))
-               :session (string (bb:ks-name ks)))))))
+               :session (tenant-session-id (string (bb:ks-name ks)))))))))
   ks)
 
 (defun register-expert-ks (blackboard domain)

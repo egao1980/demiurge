@@ -67,14 +67,21 @@
 (%install-event-from-plist-compat)
 
 (defun domain-task-id (domain)
-  (format nil "domain/~a" (expert-name domain)))
+  (let ((name (expert-name domain)))
+    (if (current-tenant)
+        (progn
+          (assert-tenant-scope (tenant-task-id name) (current-tenant))
+          (tenant-task-id name))
+        (format nil "domain/~a" name))))
 
 (defun %ksar-task-id (domain ks)
-  (format nil "domain/~a/ksar/~a"
-          (if (expert-domain-p domain)
-              (expert-name domain)
-              domain)
-          (bb:ks-name ks)))
+  (let ((name (if (expert-domain-p domain)
+                  (expert-name domain)
+                  domain)))
+    (if (current-tenant)
+        (format nil "tenant/~a/domain/~a/ksar/~a"
+                (current-tenant) name (bb:ks-name ks))
+        (format nil "domain/~a/ksar/~a" name (bb:ks-name ks)))))
 
 (defun %ensure-sqlite-backend ()
   (or (find-package '#:sql-backend-sqlite3)

@@ -39,6 +39,37 @@
              (format s "demiurge persistence error~@[: ~A~]"
                      (demiurge-error-message c)))))
 
+(define-condition capability-denied (demiurge-error)
+  ((capability :initarg :capability :reader capability-denied-capability
+               :initform nil)
+   (operation :initarg :operation :reader capability-denied-operation
+              :initform nil)
+   (principal :initarg :principal :reader capability-denied-principal
+              :initform nil)
+   (tenant :initarg :tenant :reader capability-denied-tenant
+           :initform nil))
+  (:report (lambda (c s)
+             (format s "capability denied~@[ for ~S~]~@[ on ~S~]~@[ (principal ~S)~]~@[: ~A~]"
+                     (capability-denied-operation c)
+                     (let ((cap (capability-denied-capability c)))
+                       (and cap (ignore-errors (cap:capability-name cap))))
+                     (capability-denied-principal c)
+                     (demiurge-error-message c)))))
+
+(define-condition tenant-isolation-error (demiurge-error)
+  ((expected :initarg :expected :reader tenant-isolation-expected
+             :initform nil)
+   (actual :initarg :actual :reader tenant-isolation-actual
+           :initform nil)
+   (reference :initarg :reference :reader tenant-isolation-reference
+              :initform nil))
+  (:report (lambda (c s)
+             (format s "tenant isolation: reference ~S is tenant ~S, expected ~S~@[: ~A~]"
+                     (tenant-isolation-reference c)
+                     (tenant-isolation-actual c)
+                     (tenant-isolation-expected c)
+                     (demiurge-error-message c)))))
+
 (defun call-with-demiurge-restarts (thunk)
   "Establish RETRY / USE-VALUE around THUNK."
   (tagbody
