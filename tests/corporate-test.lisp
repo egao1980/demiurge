@@ -205,9 +205,16 @@ issuer = \"https://file.example\"
                      (lambda (code prof)
                        (declare (ignore code prof))
                        tok)))
-           (domain (make-echo-expert :backend (mock-llm) :name "echo-oidc"
-                                     :profile profile))
-           (app (make-expert-app domain profile)))
+           (inner (lambda (env)
+                    (let ((path (or (getf env :path-info) "/")))
+                      (cond
+                        ((member path '("/healthz" "/readyz") :test #'string=)
+                         '(200 (:content-type "text/plain; charset=utf-8")
+                           ("ok")))
+                        (t
+                         '(404 (:content-type "text/plain; charset=utf-8")
+                           ("not found")))))))
+           (app (wrap-corporate-auth inner profile)))
       (oauth2:jwks-cache-put jwks "k1" (%corporate-hs-key))
       (ok (oauth2:oidc-discovery-p discovery))
       (ok (equal "https://idp.example" (oauth2:oidc-issuer discovery)))
@@ -251,7 +258,7 @@ issuer = \"https://file.example\"
                                   :query-string
                                   (format nil "code=abc&state=~a&id_token=~a"
                                           (quri:url-encode state)
-                                          (quri:url-encode tok))))))
+                                          (quri:url-encode tok)))))
                (headers (second cb))
                (cookie (getf headers :set-cookie)))
           (ok (= 302 (first cb)))
