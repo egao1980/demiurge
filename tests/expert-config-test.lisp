@@ -79,7 +79,7 @@ description = \"no name\"
 (deftest expert-config-bad-name-type
   (ok (signals (load-expert-config
                 (%write-tmp-toml "[expert]
-name = 1
+name = [\"not-a-string\"]
 "))
                'expert-config-error)))
 

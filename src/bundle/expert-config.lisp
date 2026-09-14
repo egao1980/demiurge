@@ -59,15 +59,17 @@
   (:extra :forbid))
 
 (schema:defschema expert-config-corporate ()
-  (oidc expert-config-oidc :optional t :accessor expert-config-corporate-oidc)
-  (ldap expert-config-ldap :optional t :accessor expert-config-corporate-ldap)
-  (postgres expert-config-dsn :optional t
+  (oidc expert-config-oidc :optional t :default nil
+        :accessor expert-config-corporate-oidc)
+  (ldap expert-config-ldap :optional t :default nil
+        :accessor expert-config-corporate-ldap)
+  (postgres expert-config-dsn :optional t :default nil
             :accessor expert-config-corporate-postgres)
-  (otlp expert-config-endpoint :optional t
+  (otlp expert-config-endpoint :optional t :default nil
         :accessor expert-config-corporate-otlp)
-  (tenant expert-config-tenant :optional t
+  (tenant expert-config-tenant :optional t :default nil
           :accessor expert-config-corporate-tenant)
-  (role-grants hash-table :optional t
+  (role-grants hash-table :optional t :default nil
                :accessor expert-config-corporate-role-grants)
   (:key-style :kebab)
   (:extra :forbid))
@@ -76,15 +78,17 @@
   "personal|corporate plus cl-stack-config key overrides (src/config.lisp)."
   (kind string :optional t :default "personal"
         :accessor expert-config-profile-kind)
-  (agenda expert-config-agenda :optional t
+  (agenda expert-config-agenda :optional t :default nil
           :accessor expert-config-profile-agenda)
-  (ksar expert-config-ksar :optional t :accessor expert-config-profile-ksar)
-  (session expert-config-session :optional t
+  (ksar expert-config-ksar :optional t :default nil
+        :accessor expert-config-profile-ksar)
+  (session expert-config-session :optional t :default nil
            :accessor expert-config-profile-session)
-  (paths expert-config-paths :optional t :accessor expert-config-profile-paths)
-  (improve expert-config-improve-overrides :optional t
+  (paths expert-config-paths :optional t :default nil
+         :accessor expert-config-profile-paths)
+  (improve expert-config-improve-overrides :optional t :default nil
            :accessor expert-config-profile-improve)
-  (corporate expert-config-corporate :optional t
+  (corporate expert-config-corporate :optional t :default nil
              :accessor expert-config-profile-corporate)
   (:key-style :kebab)
   (:extra :forbid))
@@ -124,10 +128,11 @@
            :accessor expert-config-llm-catalog)
   (catalogue (list expert-config-llm-entry) :optional t :default nil
              :accessor expert-config-llm-catalogue)
-  (budget-tokens integer :optional t
+  (budget-tokens integer :optional t :default nil
                  :accessor expert-config-llm-budget-tokens)
-  (budget-cost number :optional t :accessor expert-config-llm-budget-cost)
-  (budget expert-config-llm-budget :optional t
+  (budget-cost number :optional t :default nil
+               :accessor expert-config-llm-budget-cost)
+  (budget expert-config-llm-budget :optional t :default nil
           :accessor expert-config-llm-budget)
   (:key-style :kebab)
   (:extra :forbid))
@@ -201,10 +206,11 @@
   (skill string :optional t :default "" :accessor expert-config-ks-skill)
   (tool-grants (list expert-config-tool-grant) :optional t :default nil
                :accessor expert-config-ks-tool-grants)
-  (world boolean :optional t :accessor expert-config-ks-world)
-  (compute boolean :optional t :accessor expert-config-ks-compute)
+  (world boolean :optional t :default nil :accessor expert-config-ks-world)
+  (compute boolean :optional t :default nil :accessor expert-config-ks-compute)
   (mcp-url string :optional t :default "" :accessor expert-config-ks-mcp-url)
-  (split-ratio number :optional t :accessor expert-config-ks-split-ratio)
+  (split-ratio number :optional t :default nil
+               :accessor expert-config-ks-split-ratio)
   (:key-style :kebab)
   (:extra :forbid))
 
@@ -242,9 +248,9 @@
 (schema:defschema expert-config ()
   "Declarative expert.toml document. Extra keys are forbidden."
   (expert expert-config-expert :accessor expert-config-expert)
-  (profile expert-config-profile :optional t
+  (profile expert-config-profile :optional t :default nil
            :accessor expert-config-profile)
-  (llm expert-config-llm :optional t :accessor expert-config-llm)
+  (llm expert-config-llm :optional t :default nil :accessor expert-config-llm)
   (corpus (list expert-config-corpus) :optional t :default nil
           :accessor expert-config-corpus)
   (skill (list expert-config-skill) :optional t :default nil
@@ -253,8 +259,9 @@
       :accessor expert-config-ks)
   (eval (list expert-config-eval) :optional t :default nil
         :accessor expert-config-eval)
-  (serve expert-config-serve :optional t :accessor expert-config-serve)
-  (improve expert-config-improve :optional t
+  (serve expert-config-serve :optional t :default nil
+         :accessor expert-config-serve)
+  (improve expert-config-improve :optional t :default nil
            :accessor expert-config-improve)
   (:key-style :kebab)
   (:extra :forbid))
@@ -488,13 +495,16 @@
       ((eq kind :corporate) :corporate)
       (t :personal))))
 
+(defun %maybe (object reader)
+  (and object (ignore-errors (funcall reader object))))
+
 (defun %profile-has-overrides-p (p)
-  (and p (or (expert-config-profile-agenda p)
-             (expert-config-profile-ksar p)
-             (expert-config-profile-session p)
-             (expert-config-profile-paths p)
-             (expert-config-profile-improve p)
-             (expert-config-profile-corporate p))))
+  (and p (or (%maybe p #'expert-config-profile-agenda)
+             (%maybe p #'expert-config-profile-ksar)
+             (%maybe p #'expert-config-profile-session)
+             (%maybe p #'expert-config-profile-paths)
+             (%maybe p #'expert-config-profile-improve)
+             (%maybe p #'expert-config-profile-corporate))))
 
 (defun %config-profile (config &key hitl)
   (let ((kind (%profile-kind config))
