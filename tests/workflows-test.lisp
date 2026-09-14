@@ -419,19 +419,20 @@
                         :snippet "snippet only"
                         :rank 1
                         :source "mock")))))
-    (let* ((result (%run-research
-                    :task-id "research-browser"
-                    :llm (%research-llm :questions '("What is KSAR?"))
-                    :websearch web
-                    :browser browser))
-           (ws (getf result :workspace))
-           (sources (and (research-workspace-p ws)
-                         (research-workspace-sources ws))))
-      (ok (find-if (lambda (s) (search "BROWSER-DOM-FALLBACK" (or (getf s :text) "")))
-                   sources)
-          "browser DOM text is ingested when fetch-page fails")
-      (ok (find-if (lambda (s) (eq :fetch (getf s :kind))) sources)
-          "ingested page is recorded as a fetch, not a snippet"))))
+         (result (%run-research
+                  :task-id "research-browser"
+                  :llm (%research-llm :questions '("What is KSAR?"))
+                  :websearch web
+                  :browser browser))
+         (ws (getf result :workspace))
+         (sources (and (research-workspace-p ws)
+                       (research-workspace-sources ws))))
+    (ok (find-if (lambda (s)
+                   (search "BROWSER-DOM-FALLBACK" (or (getf s :text) "")))
+                 sources)
+        "browser DOM text is ingested when fetch-page fails")
+    (ok (find-if (lambda (s) (eq :fetch (getf s :kind))) sources)
+        "ingested page is recorded as a fetch, not a snippet")))
 
 (deftest deep-research-hitl-between-rounds-approve
   "HITL checkpoint between rounds continues after invoke-approve."
