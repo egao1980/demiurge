@@ -225,6 +225,12 @@ base-url = \"http://127.0.0.1:8888\"
       (ok (equal "http://127.0.0.1:8888"
                  (web:searxng-base-url web:*websearch-backend*))))))
 
+(deftest ensure-http-backend-prefers-async
+  (let ((http.p:*http-backend* nil)
+        (http.p:*http-client* nil))
+    (ok (demiurge::%ensure-http-backend))
+    (ok (typep http.p:*http-backend* 'http.async:async-backend))))
+
 (deftest expert-config-workspace-root
   (let* ((path (%write-tmp-toml "
 [expert]

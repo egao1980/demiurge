@@ -585,7 +585,7 @@
                   (progn
                     (unless (demiurge::%ensure-http-backend)
                       (error 'expert-config-error
-                             :message "[websearch] kind=searxng needs http-backend-dexador"))
+                             :message "[websearch] kind=searxng needs http-backend-async (or dexador fallback)")))
                     (web:make-searxng-backend
                      :base-url (if (and url (plusp (length url)))
                                    url

@@ -217,6 +217,7 @@
                "demiurge/bundle" "demiurge/cli"
                "llm-protocol" "llm-protocol/schema" "llm-protocol-openai"
                "http-backend-dexador"
+               "http-backend-async"
                "event-backend-libuv"
                "sql-backend-sqlite3"
                "crypto-backend-ironclad"

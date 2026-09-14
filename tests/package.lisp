@@ -26,6 +26,8 @@
                     (#:wf #:demiurge/workflows)
                     (#:oauth2 #:cl-stack-oauth2)
                     (#:jwt #:cl-stack-jwt)
-                    (#:ldap #:ldap-protocol)))
+                    (#:ldap #:ldap-protocol)
+                    (#:http.p #:http-protocol)
+                    (#:http.async #:http-backend-async)))
 
 (in-package #:demiurge/tests)

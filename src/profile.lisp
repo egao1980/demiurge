@@ -48,25 +48,45 @@
     (when kind
       (intern (string-upcase (string kind)) :keyword))))
 
+(defun %bind-http-backend (backend &key (timeout 600))
+  (let* ((http (find-package '#:http-protocol))
+         (star (and http (find-symbol "*HTTP-BACKEND*" http)))
+         (client (and http (find-symbol "*HTTP-CLIENT*" http)))
+         (make-c (and http (find-symbol "MAKE-HTTP-CLIENT" http))))
+    (when star (setf (symbol-value star) backend))
+    (when (and client make-c)
+      (setf (symbol-value client)
+            (funcall make-c backend :timeout timeout)))
+    t))
+
+(defun %ensure-async-http-backend ()
+  "http-backend-async × libuv — the openai-compat transport."
+  (when (and (%try-load "event-backend-libuv")
+             (%try-load "http-backend-async"))
+    (let ((make-uv (find-symbol "MAKE-LIBUV-BACKEND" :event-backend-libuv))
+          (make-http (find-symbol "MAKE-ASYNC-BACKEND" :http-backend-async))
+          (maker (find-symbol "*EVENT-BACKEND-MAKER*" :http-backend-async)))
+      (when (and make-uv (fboundp make-uv) make-http (fboundp make-http))
+        (when maker
+          (setf (symbol-value maker)
+                (lambda () (funcall make-uv))))
+        (%bind-http-backend (funcall make-http) :timeout 600)))))
+
+(defun %ensure-dexador-http-backend ()
+  "Maintenance fallback when async/libuv cannot load."
+  (when (%try-load "http-backend-dexador")
+    (let ((fn (find-symbol "MAKE-DEXADOR-BACKEND" :http-backend-dexador)))
+      (when (and fn (fboundp fn))
+        (%bind-http-backend (funcall fn) :timeout 600)))))
+
 (defun %ensure-http-backend ()
-  "Soft-bind http-backend-dexador so openai-compat / SearXNG can SEND."
+  "Bind *HTTP-BACKEND* if unset. Prefer async×libuv; dexador is fallback."
   (let* ((http (find-package '#:http-protocol))
          (star (and http (find-symbol "*HTTP-BACKEND*" http))))
     (when (and star (symbol-value star))
       (return-from %ensure-http-backend t)))
-  (when (%try-load "http-backend-dexador")
-    (let ((fn (find-symbol "MAKE-DEXADOR-BACKEND" :http-backend-dexador))
-          (http (find-package '#:http-protocol)))
-      (when (and fn (fboundp fn) http)
-        (let ((star (find-symbol "*HTTP-BACKEND*" http))
-              (client (find-symbol "*HTTP-CLIENT*" http))
-              (make-c (find-symbol "MAKE-HTTP-CLIENT" http))
-              (backend (funcall fn)))
-          (when star (setf (symbol-value star) backend))
-          (when (and client make-c)
-            (setf (symbol-value client)
-                  (funcall make-c backend :timeout 300)))
-          t)))))
+  (or (%ensure-async-http-backend)
+      (%ensure-dexador-http-backend)))
 
 (defun %require-catalog-symbol (system package-name symbol-name)
   (unless (%try-load system)
@@ -92,7 +112,7 @@
       ((member kind '(:lmstudio :lm-studio :openai :openai-compat) :test #'eq)
        (unless (%ensure-http-backend)
          (error 'expert-config-error
-                :message "openai-compat catalog entry needs http-backend-dexador"))
+                :message "openai-compat catalog entry needs http-backend-async (or dexador fallback)")))
        (let ((fn (%require-catalog-symbol "llm-protocol-openai"
                                           :llm-protocol-openai
                                           "MAKE-OPENAI-COMPAT-BACKEND")))
