@@ -246,3 +246,24 @@ seed = \"KSAR blackboard\"
     (ok (and root (plusp (length root))))
     (ok (probe-file (uiop:ensure-directory-pathname root)))
     (ok (equal "KSAR blackboard" (demiurge-config-workspace-seed cfg)))))
+
+(deftest expert-config-workspace-root-collapses-dotdot
+  "demos/deep-research root=\"../../\" must become the checkout, not a lexical ../.. path."
+  (with-tmp-dir (root)
+    (let* ((nested (ensure-directories-exist
+                    (merge-pathnames "demos/deep/" root)))
+           (path (merge-pathnames "expert.toml" nested)))
+      (%write-tree-file root "note.md" "KSAR")
+      (with-open-file (out path :direction :output :if-exists :supersede
+                           :if-does-not-exist :create)
+        (write-string "[expert]
+name = \"ws\"
+[workspace]
+root = \"../../\"
+" out))
+      (let* ((domain (load-expert-config path))
+             (cfg (profile-config (expert-profile domain)))
+             (resolved (demiurge-config-workspace-root cfg)))
+        (ok (and resolved (null (search ".." resolved))))
+        (ok (probe-file (merge-pathnames "note.md"
+                                         (uiop:ensure-directory-pathname resolved))))))))

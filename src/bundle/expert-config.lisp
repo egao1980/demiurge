@@ -802,8 +802,9 @@
          (raw (and ws (expert-config-workspace-root ws))))
     (when (and raw (plusp (length raw)))
       (pathlib:as-posix
-       (pathlib:absolute
-        (pathlib:under (pathlib:ensure-directory base) raw))))))
+       (pathlib:normpath
+        (pathlib:absolute
+         (pathlib:under (pathlib:ensure-directory base) raw)))))))
 
 (defun load-expert-config (path &key profile llm (register nil) base-dir)
   "Load expert.toml at PATH → the same EXPERT-DOMAIN DEFEXPERT builds.

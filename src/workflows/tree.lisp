@@ -26,10 +26,12 @@
   (and designator (pathlib:ensure-directory designator)))
 
 (defun %existing-dir-pathname (designator)
-  "DIRECTORY pathname via pathlib:absolute (not resolve — /tmp ≠ /private/tmp)."
-  (let ((p (%as-dir designator)))
+  "DIRECTORY pathname via pathlib:absolute + normpath (not resolve — /tmp ≠ /private/tmp).
+   Collapse lexical `..` so expert.toml root=\"../../\" is a real checkout."
+  (let ((p (ignore-errors
+             (pathlib:normpath (pathlib:absolute (%as-dir designator))))))
     (and p (pathlib:directory-p p)
-         (pathlib:path-pathname (pathlib:absolute p)))))
+         (pathlib:path-pathname p))))
 
 (defun find-lisp-workspace-root (&optional (start (pathlib:cwd)))
   "Walk up from START looking for .lisp-workspace/ or AGENTS.md."
@@ -116,7 +118,8 @@
   (let ((dir (%as-dir root)))
     (and dir
          (pathlib:exists-p (pathlib:join dir ".lisp-workspace"))
-         (pathlib:exists-p (pathlib:join dir "demiurge-plan-vectors")))))
+         (pathlib:exists-p (pathlib:join dir "demiurge-plan-vectors"))
+         t)))
 
 (defun %rel-of (root path)
   "POSIX relpath. absolute first; resolve both only if listing used realpath."
