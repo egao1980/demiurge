@@ -9,13 +9,13 @@
                  ((null steering) nil)
                  ((steer:steering-source-p steering)
                   (steer:list-directives steering))
-                 ((listp steering) steering)
+                 ((consp steering) steering)
                  (t (ignore-errors
                       (steer:list-directives (steer:coerce-steering steering)))))))
     (sort (mapcar #'steer:steer-directive-name
                   (remove-if-not (lambda (d)
                                    (eq (steer:steer-directive-kind d) :skill))
-                                 (or dirs '())))
+                                 dirs))
           #'string<)))
 
 (defun %ks-name (ks)
@@ -69,20 +69,26 @@
       (ok (equal (%dataset-name from-toml) (%dataset-name from-lisp)))
       (ok (equal "cl-dev" (%dataset-name from-toml))))))
 
-(deftest-parametrize expert-config-schema-errors
-    ((label toml)
-     ("missing-name" "[expert]
+(deftest expert-config-missing-name
+  (ok (signals (load-expert-config
+                (%write-tmp-toml "[expert]
 description = \"no name\"
-")
-     ("bad-name-type" "[expert]
+"))
+               'expert-config-error)))
+
+(deftest expert-config-bad-name-type
+  (ok (signals (load-expert-config
+                (%write-tmp-toml "[expert]
 name = 1
-")
-     ("missing-expert" "[profile]
+"))
+               'expert-config-error)))
+
+(deftest expert-config-missing-expert-section
+  (ok (signals (load-expert-config
+                (%write-tmp-toml "[profile]
 kind = \"personal\"
 "))
-  (let ((path (%write-tmp-toml toml)))
-    (ok (signals (load-expert-config path) 'expert-config-error)
-        label)))
+               'expert-config-error)))
 
 (deftest unknown-key-continue-lists-valid-keys
   "Unknown key signals UNKNOWN-EXPERT-CONFIG-KEY; CONTINUE proceeds and lists valid keys."
