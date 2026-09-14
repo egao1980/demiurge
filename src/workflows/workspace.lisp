@@ -375,7 +375,8 @@ Retrieve with retrieve-research-sources (RAG) or MCP read-resource."
             (lambda (c)
               (incf attempts)
               (when (< attempts *research-output-attempts*)
-                (llm:invoke-retry c))
+                ;; RETRY lives on WITH-LLM-RESTARTS, not on the output-error.
+                (llm:invoke-retry))))
               (let ((text (string-trim '(#\Space #\Tab #\Newline #\Return)
                                        (%llm-response-text
                                         (llm:llm-output-error-response c)))))
