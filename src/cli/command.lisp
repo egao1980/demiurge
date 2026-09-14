@@ -406,11 +406,30 @@
      :description "Narrated ask/research runner over a demo directory."
      :handler #'cmd-demo))))
 
+(defun %command-for-argv (command argv)
+  (or (and (first argv)
+           (find (first argv) (cli:cli-command-subcommands command)
+                 :key #'cli:cli-command-name :test #'string-equal))
+      command))
+
+(defun %invoke (command argv)
+  "PARSE then call the matching handler. Avoid CLI:RUN — it rewrites
+   product conditions as CLI-PARSE-ERROR."
+  (multiple-value-bind (opts free)
+      (cli:parse command argv)
+    (let* ((sub (%command-for-argv command argv))
+           (handler (cli:cli-command-handler sub)))
+      (unless handler
+        (error 'cli:cli-usage-error
+               :message (format nil "no handler for command ~a"
+                                (cli:cli-command-name sub))))
+      (funcall handler opts free))))
+
 (defun run-cli (argv &key (command (make-app)))
   "Parse + run ARGV. Returns an exit status (0/1/2) without UIOP:QUIT."
   (handler-case
       (progn
-        (cli:run command :argv argv)
+        (%invoke command argv)
         0)
     (cli:cli-exit (e)
       (cli:cli-exit-code e))
