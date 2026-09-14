@@ -4,13 +4,13 @@ Product core for [cl-stack](https://github.com/egao1980/cl-stack) expert systems
 
 | System | Role |
 |--------|------|
-| `demiurge` (`stack-demiurge`) 0.3.3 | `expert-domain`, `defexpert`, `agent-ks`, controller, personal profile |
-| `demiurge/improve` 0.3.3 | Versioned-KS improvement cycle |
-| `demiurge/observe` 0.3.3 | Span/metric taxonomy, `/healthz` + `/readyz`, profiles |
-| `demiurge/serve` 0.3.3 | MCP / A2A / AG-UI Clack app + feedback |
-| `demiurge/ingest` 0.3.3 | Durable file / IMAP / object-store ingest |
-| `demiurge/workflows` 0.3.3 | Durable project workflows + deep-research fan-out |
-| `demiurge/bundle` 0.3.3 | Expert-bundle pack / hash-verified install / rollback (local OCI layout) |
+| `demiurge` (`stack-demiurge`) 0.3.4 | `expert-domain`, `defexpert`, `agent-ks`, controller, personal + corporate profiles |
+| `demiurge/improve` 0.3.4 | Versioned-KS improvement cycle |
+| `demiurge/observe` 0.3.4 | Span/metric taxonomy, `/healthz` + `/readyz`, profiles |
+| `demiurge/serve` 0.3.4 | MCP / A2A / AG-UI Clack app + feedback |
+| `demiurge/ingest` 0.3.4 | Durable file / IMAP / object-store ingest |
+| `demiurge/workflows` 0.3.4 | Durable project workflows + deep-research fan-out |
+| `demiurge/bundle` 0.3.4 | Expert-bundle pack / hash-verified install / rollback (local OCI layout) |
 
 ```lisp
 (asdf:load-system "demiurge")
@@ -23,13 +23,15 @@ Product core for [cl-stack](https://github.com/egao1980/cl-stack) expert systems
 ;; ⇒ "echo: hi"
 ```
 
-**Config** (`cl-stack-config`, TOML + `DEMIURGE_*` env): `agenda.max-concurrency`, `ksar.timeout-seconds`, `session.window-turns`, `llm.default-model`, `llm.catalog`, `paths.data-dir`, `improve.enabled`. `(load-demiurge-config &key path)`.
+**Config** (`cl-stack-config`, TOML + `DEMIURGE_*` env): `agenda.max-concurrency`, `ksar.timeout-seconds`, `session.window-turns`, `llm.default-model`, `llm.catalog`, `paths.data-dir`, `improve.enabled`, plus `[corporate]` (`oidc.issuer` / `oidc.client-id`, `ldap.url` / `ldap.base-dn` / `ldap.group-role-map`, `postgres.dsn`, `otlp.endpoint`, `tenant.id`, `role-grants`). `(load-demiurge-config &key path)`.
 
 **Persistence:** `task-protocol` journal (SQLite via `task-backend-sql` in the personal profile) + `blackboard-journal`. `(resume-domain name profile)` replays the board and re-arms timers. KSAR execute is a `with-durable-step`.
 
 **Observe:** spans `demiurge.ksar.execute` / `demiurge.agent.run`. Logs use `log-protocol` `with-context` `:trace-id` / `:span-id`. Never emit spans through the logger.
 
 **Personal profile:** `(make-personal-profile &key data-dir)` — SQLite sessions + journal, `rag-backend-text` + memory/sql store, LLM catalog (llama-cpp or LM Studio from config).
+
+**Corporate profile:** `(make-corporate-profile &key data-dir)` — OIDC login (`cl-stack-oauth2` + `cl-stack-jwt`) on the Clack app (session cookie = subject + tenant; `/healthz` and `/readyz` stay open); LDAP group → role → filtered capability catalogue (`capability-denied` on invoke, never mutate the root); `*tenant*` threaded into session / journal / corpus / budget ids (`tenant-isolation-error` on a cross-tenant reference); Postgres when `corporate.postgres.dsn` is set (sessions, journal, pgvector + hybrid), otherwise sqlite/memory; local `SELECT … FOR UPDATE SKIP LOCKED` claim helper; `sql-migrate` revisions per tenant schema when that system loads; `apply-corporate-observability` with `otlp.endpoint`. Compose: `ops/docker-compose.corporate.yml` (pgvector, optional LDAP/Keycloak; reuse `ops/docker-compose.observability.yml` for the collector).
 
 **Serve** (`demiurge/serve`): `(make-expert-app domain profile)` is a Clack dispatcher (AG-UI POST→SSE, `/feedback`, `/healthz`, `/readyz`). `/readyz` mounts `demiurge/observe` when that system is loaded and the profile has stores; otherwise the stub (`*readyz-fn*` / `domain-ready-p`). `(serve-expert domain &key transports)` starts stdio-MCP and/or HTTP. Feedback (`demiurge.feedback` / MCP `record_feedback`) calls `eval-protocol:add-case` with `:source :human-feedback`.
 

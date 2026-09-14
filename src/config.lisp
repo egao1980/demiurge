@@ -18,6 +18,19 @@ data-dir = \"\"
 
 [improve]
 enabled = false
+
+[corporate]
+postgres.dsn = \"\"
+otlp.endpoint = \"\"
+tenant.id = \"\"
+
+[corporate.oidc]
+issuer = \"\"
+client-id = \"\"
+
+[corporate.ldap]
+url = \"\"
+base-dn = \"\"
 ")
 
 (defclass demiurge-config ()
@@ -48,6 +61,42 @@ enabled = false
    (improve-enabled
     :initarg :improve-enabled
     :accessor demiurge-config-improve-enabled
+    :initform nil)
+   (corporate-oidc-issuer
+    :initarg :corporate-oidc-issuer
+    :accessor demiurge-config-corporate-oidc-issuer
+    :initform nil)
+   (corporate-oidc-client-id
+    :initarg :corporate-oidc-client-id
+    :accessor demiurge-config-corporate-oidc-client-id
+    :initform nil)
+   (corporate-ldap-url
+    :initarg :corporate-ldap-url
+    :accessor demiurge-config-corporate-ldap-url
+    :initform nil)
+   (corporate-ldap-base-dn
+    :initarg :corporate-ldap-base-dn
+    :accessor demiurge-config-corporate-ldap-base-dn
+    :initform nil)
+   (corporate-ldap-group-role-map
+    :initarg :corporate-ldap-group-role-map
+    :accessor demiurge-config-corporate-ldap-group-role-map
+    :initform nil)
+   (corporate-postgres-dsn
+    :initarg :corporate-postgres-dsn
+    :accessor demiurge-config-corporate-postgres-dsn
+    :initform nil)
+   (corporate-otlp-endpoint
+    :initarg :corporate-otlp-endpoint
+    :accessor demiurge-config-corporate-otlp-endpoint
+    :initform nil)
+   (corporate-tenant-id
+    :initarg :corporate-tenant-id
+    :accessor demiurge-config-corporate-tenant-id
+    :initform nil)
+   (corporate-role-grants
+    :initarg :corporate-role-grants
+    :accessor demiurge-config-corporate-role-grants
     :initform nil)
    (raw
     :initarg :raw
@@ -128,6 +177,58 @@ enabled = false
             raw))
       (t nil))))
 
+(defun %as-string-list (value)
+  (cond
+    ((null value) nil)
+    ((stringp value) (list value))
+    ((and (vectorp value) (not (stringp value)))
+     (map 'list (lambda (x) (if (stringp x) x (princ-to-string x))) value))
+    ((listp value)
+     (mapcar (lambda (x) (if (stringp x) x (princ-to-string x))) value))
+    (t (list (princ-to-string value)))))
+
+(defun %cfg-string-map (stack path)
+  "Table at PATH → alist of (string . string)."
+  (let ((raw (%cfg-get stack path)))
+    (cond
+      ((null raw) nil)
+      ((hash-table-p raw)
+       (let ((out nil))
+         (maphash (lambda (k v)
+                    (push (cons (string k)
+                                (if (or (stringp v) (null v))
+                                    v
+                                    (princ-to-string v)))
+                          out))
+                  raw)
+         (nreverse out)))
+      ((and (listp raw) (keywordp (car raw)))
+       (loop for (k v) on raw by #'cddr
+             collect (cons (string-downcase (string k))
+                           (if (or (stringp v) (null v))
+                               v
+                               (princ-to-string v)))))
+      ((listp raw) raw)
+      (t nil))))
+
+(defun %cfg-role-grants (stack)
+  "corporate.role-grants → alist of (role-string . op-string-list)."
+  (let ((raw (%cfg-get stack "corporate.role-grants")))
+    (cond
+      ((null raw) nil)
+      ((hash-table-p raw)
+       (let ((out nil))
+         (maphash (lambda (role ops)
+                    (push (cons (string role) (%as-string-list ops)) out))
+                  raw)
+         (nreverse out)))
+      ((and (listp raw) (keywordp (car raw)))
+       (loop for (k v) on raw by #'cddr
+             collect (cons (string-downcase (string k))
+                           (%as-string-list v))))
+      ((listp raw) raw)
+      (t nil))))
+
 (defun %config-from-stack (stack)
   (make-instance 'demiurge-config
                  :agenda-max-concurrency (%cfg-int stack "agenda.max-concurrency" 4)
@@ -137,6 +238,16 @@ enabled = false
                  :llm-catalog (%cfg-catalog stack)
                  :paths-data-dir (%cfg-string stack "paths.data-dir" nil)
                  :improve-enabled (%cfg-bool stack "improve.enabled" nil)
+                 :corporate-oidc-issuer (%cfg-string stack "corporate.oidc.issuer" nil)
+                 :corporate-oidc-client-id (%cfg-string stack "corporate.oidc.client-id" nil)
+                 :corporate-ldap-url (%cfg-string stack "corporate.ldap.url" nil)
+                 :corporate-ldap-base-dn (%cfg-string stack "corporate.ldap.base-dn" nil)
+                 :corporate-ldap-group-role-map
+                 (%cfg-string-map stack "corporate.ldap.group-role-map")
+                 :corporate-postgres-dsn (%cfg-string stack "corporate.postgres.dsn" nil)
+                 :corporate-otlp-endpoint (%cfg-string stack "corporate.otlp.endpoint" nil)
+                 :corporate-tenant-id (%cfg-string stack "corporate.tenant.id" nil)
+                 :corporate-role-grants (%cfg-role-grants stack)
                  :raw stack))
 
 (defun %write-default-toml (path)

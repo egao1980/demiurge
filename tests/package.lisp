@@ -22,6 +22,9 @@
                     (#:obj #:object-store-protocol)
                     (#:web #:websearch-protocol)
                     (#:doc #:doc-extract-protocol)
-                    (#:wf #:demiurge/workflows)))
+                    (#:wf #:demiurge/workflows)
+                    (#:oauth2 #:cl-stack-oauth2)
+                    (#:jwt #:cl-stack-jwt)
+                    (#:ldap #:ldap-protocol)))
 
 (in-package #:demiurge/tests)

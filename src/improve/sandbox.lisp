@@ -158,8 +158,11 @@
     (funcall run backend spec)))
 
 (defun improve-budget-scope (cycle-id)
-  "A2 budget-policy scope for an improvement cycle."
-  (list :improve cycle-id))
+  "A2 budget-policy scope for an improvement cycle.
+   When *TENANT* is bound, the scope is tenant-prefixed (C4)."
+  (if (current-tenant)
+      (tenant-budget-scope :improve cycle-id)
+      (list :improve cycle-id)))
 
 (defun wrap-llm-budget (llm cycle-id &key budget)
   "Wrap LLM in a router budget-policy scoped to (:IMPROVE CYCLE-ID).

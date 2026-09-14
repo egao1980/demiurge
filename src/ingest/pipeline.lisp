@@ -120,6 +120,16 @@
         (rag:upsert store chunks))))
   chunks)
 
+(defun %ingest-base-metadata (item)
+  "Chunk metadata. When *TENANT* is bound, carry tenant + scoped corpus name."
+  (append (list :content-hash (ingest-item-hash item)
+                :uri (ingest-item-uri item))
+          (when (current-tenant)
+            (list :tenant (current-tenant)
+                  :corpus (tenant-corpus-name
+                           (or (ingest-item-uri item)
+                               (ingest-item-hash item)))))))
+
 (defun %plain-chunks (item)
   (let ((hash (ingest-item-hash item))
         (text (or (ingest-item-content item) "")))
@@ -127,8 +137,7 @@
            :id hash
            :document-id hash
            :text text
-           :metadata (list :content-hash hash
-                           :uri (ingest-item-uri item))))))
+           :metadata (%ingest-base-metadata item)))))
 
 (defun ingest-one-item (item &key store embedder object-store)
   (when *ingest-item-hook*
@@ -141,8 +150,7 @@
                         (rag.text:make-block-tree-chunker :store object-store)
                         doc
                         :document-id hash
-                        :base-metadata (list :content-hash hash
-                                             :uri (ingest-item-uri item))
+                        :base-metadata (%ingest-base-metadata item)
                         :store object-store))
                    (error () nil))))
     (unless chunks

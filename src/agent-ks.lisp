@@ -131,9 +131,12 @@
   (let* ((agent (agent-ks-agent ks))
          (prompt (bb:read-section blackboard (agent-ks-prompt-key ks)))
          (steering (%ensure-agent-steering ks agent))
+         (domain (%domain-for-board blackboard))
+         (catalogue (or (catalogue-for-request domain)
+                        (agent-ks-catalogue ks)))
          (tools (collect-agent-ks-tools
                  ks
-                 :catalogue (agent-ks-catalogue ks)
+                 :catalogue catalogue
                  :steering steering
                  :mcp-peer (agent-ks-mcp-peer ks))))
     (%ensure-agent-memory ks agent)

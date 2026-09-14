@@ -107,7 +107,9 @@
 (defun make-expert-app (domain profile)
   "Clack dispatcher: AG-UI POST→SSE, feedback, /healthz, /readyz.
    /readyz uses demiurge/observe when that system is loaded and PROFILE
-   carries stores; otherwise the B3 stub (DOMAIN-READY-P / *READYZ-FN*)."
+   carries stores; otherwise the B3 stub (DOMAIN-READY-P / *READYZ-FN*).
+   A CORPORATE-PROFILE wraps the app in OIDC middleware; /healthz and
+   /readyz stay unauthenticated."
   (check-type domain expert-domain)
   (let* ((mcp-server (make-expert-mcp-server domain))
          (ag-ui-app (ag-ui:make-ag-ui-app
@@ -117,29 +119,34 @@
          (a2a-app (a2a.rpc:make-a2a-app
                    (make-expert-a2a-agent domain)
                    :path "/a2a"
-                   :card (expert-agent-card domain))))
-    (lambda (env)
-      (let ((path (or (getf env :path-info) "/"))
-            (method (getf env :request-method)))
-        (cond
-          ((string= path "/healthz")
-           (%healthz-response))
-          ((string= path "/readyz")
-           (%readyz-response domain profile))
-          ((and (string= path "/feedback") (eq method :post))
-           (%feedback-response domain env))
-          ((string= path "/mcp")
-           (funcall mcp-app env))
-          ((or (string= path "/a2a")
-               (a2a.rpc:well-known-card-path-p path))
-           (funcall a2a-app env))
-          ((or (string= path "/") (string= path "/ag-ui"))
-           (funcall ag-ui-app
-                    (if (string= path "/ag-ui")
-                        (%rewrite-path env "/")
-                        env)))
-          (t
-           '(404 (:content-type "text/plain; charset=utf-8") ("not found"))))))))
+                   :card (expert-agent-card domain)))
+         (app
+          (lambda (env)
+            (let ((path (or (getf env :path-info) "/"))
+                  (method (getf env :request-method)))
+              (cond
+                ((string= path "/healthz")
+                 (%healthz-response))
+                ((string= path "/readyz")
+                 (%readyz-response domain profile))
+                ((and (string= path "/feedback") (eq method :post))
+                 (%feedback-response domain env))
+                ((string= path "/mcp")
+                 (funcall mcp-app env))
+                ((or (string= path "/a2a")
+                     (a2a.rpc:well-known-card-path-p path))
+                 (funcall a2a-app env))
+                ((or (string= path "/") (string= path "/ag-ui"))
+                 (funcall ag-ui-app
+                          (if (string= path "/ag-ui")
+                              (%rewrite-path env "/")
+                              env)))
+                (t
+                 '(404 (:content-type "text/plain; charset=utf-8")
+                   ("not found"))))))))
+    (if (corporate-profile-p profile)
+        (wrap-corporate-auth app profile)
+        app)))
 
 (defun %start-http (app host port)
   (let ((serve (find-symbol "SERVE" :http-server-protocol)))
