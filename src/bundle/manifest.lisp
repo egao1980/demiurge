@@ -132,19 +132,30 @@
        (loop for (k v) on value by #'cddr
              always (or (keywordp k) (symbolp k) (stringp k)))))
 
+(defun %looks-swapped-plist-p (value)
+  "schema:dump :as :plist nreverses list* → (value key value key …)."
+  (and (consp value)
+       (evenp (length value))
+       (>= (length value) 2)
+       (not (keywordp (first value)))
+       (or (keywordp (second value)) (symbolp (second value)))))
+
 (defun %jsonish-to-lisp (value)
   "Coerce dump / journal / JSON-ish trees to keyword plists and lists.
-   Vectors (JSON arrays) and hash-tables (nested schema:dump) become Lisp.
-   Do not NREVERSE a list* plist — that swaps keys and values."
+   Vectors (JSON arrays) and hash-tables become Lisp. Repair swapped plists."
   (cond
     ((hash-table-p value)
      (let ((acc '()))
        (maphash (lambda (k v)
-                  (setf acc (list* (%as-keyword k) (%jsonish-to-lisp v) acc)))
+                  (push (%as-keyword k) acc)
+                  (push (%jsonish-to-lisp v) acc))
                 value)
-       acc))
+       (nreverse acc)))
     ((and (vectorp value) (not (stringp value)))
      (map 'list #'%jsonish-to-lisp value))
+    ((%looks-swapped-plist-p value)
+     (loop for (v k) on value by #'cddr
+           append (list (%as-keyword k) (%jsonish-to-lisp v))))
     ((%plist-shaped-p value)
      (loop for (k v) on value by #'cddr
            append (list (%as-keyword k) (%jsonish-to-lisp v))))
@@ -152,18 +163,147 @@
      (mapcar #'%jsonish-to-lisp value))
     (t value)))
 
+(defun %g (plist key &optional default)
+  (let ((tail (member key plist)))
+    (if tail (second tail) default)))
+
+(defun %readable-skill-ref (r)
+  (list :name (bundle-skill-ref-name r)
+        :version (bundle-skill-ref-version r)
+        :digest (bundle-skill-ref-digest r)
+        :media-type (bundle-skill-ref-media-type r)))
+
+(defun %readable-corpus-item (i)
+  (list :uri (bundle-corpus-item-uri i)
+        :digest (bundle-corpus-item-digest i)
+        :format (bundle-corpus-item-format i)))
+
+(defun %readable-corpus-source (s)
+  (list :kind (bundle-corpus-source-kind s)
+        :spec (bundle-corpus-source-spec s)
+        :items (mapcar #'%readable-corpus-item
+                       (or (bundle-corpus-source-items s) '()))))
+
+(defun %readable-eval-dataset-ref (r)
+  (list :name (bundle-eval-dataset-ref-name r)
+        :version (bundle-eval-dataset-ref-version r)
+        :digest (bundle-eval-dataset-ref-digest r)
+        :payload (bundle-eval-dataset-ref-payload r)))
+
+(defun %readable-ks-definition (d)
+  (list :name (bundle-ks-definition-name d)
+        :kind (bundle-ks-definition-kind d)
+        :watch (bundle-ks-definition-watch d)
+        :prompt-key (bundle-ks-definition-prompt-key d)
+        :result-key (bundle-ks-definition-result-key d)
+        :instructions (bundle-ks-definition-instructions d)))
+
+(defun %readable-provenance (p)
+  (if (null p)
+      nil
+      (list :cycle-ids (copy-list (bundle-provenance-cycle-ids p))
+            :eval-run-ids (copy-list (bundle-provenance-eval-run-ids p))
+            :built-at (or (bundle-provenance-built-at p) ""))))
+
+(defun %readable-manifest (m)
+  (list :name (expert-bundle-manifest-name m)
+        :version (expert-bundle-manifest-version m)
+        :catalogue-vocab (expert-bundle-manifest-catalogue-vocab m)
+        :ks-definitions (mapcar #'%readable-ks-definition
+                                (or (expert-bundle-manifest-ks-definitions m) '()))
+        :skill-refs (mapcar #'%readable-skill-ref
+                            (or (expert-bundle-manifest-skill-refs m) '()))
+        :corpus-sources (mapcar #'%readable-corpus-source
+                                (or (expert-bundle-manifest-corpus-sources m) '()))
+        :eval-datasets (mapcar #'%readable-eval-dataset-ref
+                               (or (expert-bundle-manifest-eval-datasets m) '()))
+        :profile-defaults (expert-bundle-manifest-profile-defaults m)
+        :provenance (%readable-provenance
+                     (expert-bundle-manifest-provenance m))
+        :annotations (or (expert-bundle-manifest-annotations m) "")))
+
 (defun %readable-value (value)
-  "PRINT/READ-able keyword plist. schema:dump :as :plist nreverses a list*
-   accumulator and swaps keys/values; nested objects also stay hash-tables
-   (printed as #<HASH-TABLE>). Dump as :hash-table, then keywordize."
-  (%jsonish-to-lisp
-   (if (and (typep value 'standard-object)
-            (schema:schema-class-p (class-of value)))
-       (schema:dump value :as :hash-table)
-       value)))
+  "PRINT/READ-able keyword plist. Do not use schema:dump — :as :plist
+   swaps keys via nreverse, and :as :hash-table still mis-parses on replay."
+  (cond
+    ((expert-bundle-manifest-p value) (%readable-manifest value))
+    ((bundle-skill-ref-p value) (%readable-skill-ref value))
+    ((bundle-corpus-item-p value) (%readable-corpus-item value))
+    ((bundle-corpus-source-p value) (%readable-corpus-source value))
+    ((bundle-eval-dataset-ref-p value) (%readable-eval-dataset-ref value))
+    ((bundle-ks-definition-p value) (%readable-ks-definition value))
+    ((bundle-provenance-p value) (%readable-provenance value))
+    (t (%jsonish-to-lisp value))))
 
 (defun %manifest-text (manifest)
   (%prin1-string (%readable-value manifest)))
+
+(defun %parse-skill-ref (x)
+  (let ((p (%jsonish-to-lisp x)))
+    (make-bundle-skill-ref
+     :name (or (%g p :name) "")
+     :version (or (%g p :version) "")
+     :digest (or (%g p :digest) "")
+     :media-type (or (%g p :media-type) "text/markdown"))))
+
+(defun %parse-corpus-item (x)
+  (let ((p (%jsonish-to-lisp x)))
+    (make-bundle-corpus-item
+     :uri (or (%g p :uri) "")
+     :digest (or (%g p :digest) "")
+     :format (or (%g p :format) "txt"))))
+
+(defun %parse-corpus-source (x)
+  (let ((p (%jsonish-to-lisp x)))
+    (make-bundle-corpus-source
+     :kind (or (%g p :kind) "file")
+     :spec (or (%g p :spec) "")
+     :items (mapcar #'%parse-corpus-item (or (%g p :items) '())))))
+
+(defun %parse-eval-dataset-ref (x)
+  (let ((p (%jsonish-to-lisp x)))
+    (make-bundle-eval-dataset-ref
+     :name (or (%g p :name) "")
+     :version (or (%g p :version) "")
+     :digest (or (%g p :digest) "")
+     :payload (or (%g p :payload) ""))))
+
+(defun %parse-ks-definition (x)
+  (let ((p (%jsonish-to-lisp x)))
+    (make-bundle-ks-definition
+     :name (or (%g p :name) "")
+     :kind (or (%g p :kind) "agent-ks")
+     :watch (or (%g p :watch) "(:prompt)")
+     :prompt-key (or (%g p :prompt-key) "prompt")
+     :result-key (or (%g p :result-key) "result")
+     :instructions (or (%g p :instructions) ""))))
+
+(defun %parse-provenance (x)
+  (if (null x)
+      (make-bundle-provenance)
+      (let ((p (%jsonish-to-lisp x)))
+        (make-bundle-provenance
+         :cycle-ids (copy-list (or (%g p :cycle-ids) '()))
+         :eval-run-ids (copy-list (or (%g p :eval-run-ids) '()))
+         :built-at (or (%g p :built-at) "")))))
+
+(defun %parse-manifest-plist (plist)
+  "Build a manifest from a keyword plist. Does not use schema:parse."
+  (let ((p (%jsonish-to-lisp plist)))
+    (make-expert-bundle-manifest
+     :name (%g p :name)
+     :version (or (%g p :version) "0.1.0")
+     :catalogue-vocab (or (%g p :catalogue-vocab) "(:world)")
+     :ks-definitions (mapcar #'%parse-ks-definition
+                             (or (%g p :ks-definitions) '()))
+     :skill-refs (mapcar #'%parse-skill-ref (or (%g p :skill-refs) '()))
+     :corpus-sources (mapcar #'%parse-corpus-source
+                             (or (%g p :corpus-sources) '()))
+     :eval-datasets (mapcar #'%parse-eval-dataset-ref
+                            (or (%g p :eval-datasets) '()))
+     :profile-defaults (or (%g p :profile-defaults) "(:kind :personal)")
+     :provenance (%parse-provenance (%g p :provenance))
+     :annotations (or (%g p :annotations) ""))))
 
 (defun make-bundle-skill-ref (&key name (version "") (digest "")
                                 (media-type "text/markdown"))

@@ -52,9 +52,6 @@
          :path path
          :message message))
 
-(defun %parse-manifest-plist (plist)
-  (schema:parse 'expert-bundle-manifest (%jsonish-to-lisp plist) :coerce t))
-
 (defun %manifest-sexp-p (sexp)
   (let ((body (%jsonish-to-lisp sexp)))
     (and (consp body)
@@ -158,6 +155,25 @@
   (or skill-store
       (and (deployment-profile-p profile) (profile-skill-store profile))))
 
+(defun %ensure-profile (profile &key skill-store journal rag-store)
+  "file-skill-store lives on the profile, never on expert-domain :steering.
+   coerce-steering signals STEER-ERROR for a skill store."
+  (let ((p (if (deployment-profile-p profile)
+               profile
+               (make-instance 'personal-profile
+                              :kind (if (eq profile :corporate)
+                                        :corporate
+                                        :personal)
+                              :journal (and (deployment-profile-p profile)
+                                            (profile-journal profile))))))
+    (when skill-store
+      (setf (profile-skill-store p) skill-store))
+    (when journal
+      (setf (profile-journal p) journal))
+    (when rag-store
+      (setf (profile-rag-store p) rag-store))
+    p))
+
 (defun %rag-store-for (profile store)
   (or store
       (and (deployment-profile-p profile) (profile-rag-store profile))
@@ -246,8 +262,7 @@
         (push root dirs)))
     (nreverse dirs)))
 
-(defun %domain-from-manifest (manifest &key profile llm eval-suites corpora
-                                         steering)
+(defun %domain-from-manifest (manifest &key profile llm eval-suites corpora)
   (let* ((llm (or llm (%llm-for profile nil)))
          (defs (expert-bundle-manifest-ks-definitions manifest))
          (ks-set (if defs
@@ -255,13 +270,14 @@
                      (expert-ks-set
                       (make-echo-expert
                        :backend llm
-                       :name (expert-bundle-manifest-name manifest))))))
+                       :name (expert-bundle-manifest-name manifest)
+                       :profile (or profile :personal))))))
     (make-expert-domain
      :name (expert-bundle-manifest-name manifest)
      :catalogue (%catalogue-from-vocab
                  (expert-bundle-manifest-catalogue-vocab manifest))
      :ks-set ks-set
-     :steering steering
+     :steering nil
      :corpora corpora
      :eval-suites (or eval-suites (%datasets-from-manifest manifest))
      :profile (or profile :personal))))
@@ -319,6 +335,10 @@
                 :journal journal))
          (skill-store (%skill-store-for profile skill-store))
          (rag-store (%rag-store-for profile store))
+         (profile (%ensure-profile profile
+                                   :skill-store skill-store
+                                   :journal journal
+                                   :rag-store rag-store))
          (llm (%llm-for profile llm))
          (embedder (or embedder llm))
          (result nil))
@@ -353,13 +373,11 @@
                         (expert-name
                          (register-expert
                           (%domain-from-manifest
-                           manifest :profile profile :llm llm
-                           :steering skill-store))))))
+                           manifest :profile profile :llm llm))))))
                  (or (find-expert registered)
                      (register-expert
                       (%domain-from-manifest
-                       manifest :profile profile :llm llm
-                       :steering skill-store))))))
+                       manifest :profile profile :llm llm))))))
           (let* ((snap-root (merge-pathnames
                              (format nil "bundle-snap-~a-~a/" name version)
                              (uiop:temporary-directory)))
@@ -418,6 +436,9 @@
                                 (%install-key name) version))
                 :journal journal))
          (skill-store (%skill-store-for profile skill-store))
+         (profile (%ensure-profile profile
+                                   :skill-store skill-store
+                                   :journal journal))
          (result nil))
     (task:with-durable-task (task journal)
       (let* ((rec (or (find-bundle-install name version)
@@ -438,8 +459,7 @@
                (register-expert
                 (%domain-from-manifest manifest
                                        :profile profile
-                                       :llm (%llm-for profile llm)
-                                       :steering skill-store))))
+                                       :llm (%llm-for profile llm)))))
           (setf result (list :name (expert-name domain)
                              :version (expert-bundle-manifest-version manifest)
                              :domain (expert-name domain)))
