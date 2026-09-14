@@ -9,7 +9,9 @@
                     (#:web #:websearch-protocol)
                     (#:doc #:doc-extract-protocol)
                     (#:schema #:schema-protocol)
-                    (#:log #:log-protocol))
+                    (#:log #:log-protocol)
+                    (#:mcp #:mcp-protocol)
+                    (#:agent #:ai-agent-protocol))
   (:export
    #:workflows-error
    #:approval-required
@@ -71,6 +73,29 @@
    #:wrap-research-llm
    #:run-deep-research
    #:render-research-document
+
+   #:*default-research-instructions*
+   #:*default-research-clip-chars*
+   #:merge-research-instructions
+   #:research-instruction
+   #:research-workspace
+   #:research-workspace-p
+   #:make-research-workspace
+   #:research-workspace-name
+   #:research-workspace-board
+   #:research-workspace-store
+   #:research-workspace-sources
+   #:research-workspace-mcp
+   #:research-workspace-instructions
+   #:record-research-source
+   #:retrieve-research-sources
+   #:research-source-catalog
+   #:research-source-uri
+   #:clip-research-text
+   #:generate-research-step
+   #:ensure-research-mcp-server
+   #:list-research-resources
+   #:read-research-resource
 
    #:report-workflow-progress
    #:sync-workflow-wire

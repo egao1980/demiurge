@@ -144,12 +144,14 @@
                "rag-protocol"
                "llm-protocol"
                "llm-protocol/router"
-               "task-protocol")
+               "task-protocol"
+               "mcp-protocol")
   :serial t
   :pathname "src/workflows"
   :components ((:file "package")
                (:file "reporting")
                (:file "project")
+               (:file "workspace")
                (:file "deep-research")))
 
 (defsystem "demiurge/bundle"

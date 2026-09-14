@@ -17,7 +17,15 @@
    :handler
    (lambda (backend turns &key &allow-other-keys)
      (declare (ignore backend))
-     (let ((text (%turns-text turns)))
+     (let* ((text (%turns-text turns))
+            (sub-pos (search "Subquestion: " text))
+            (sub (when sub-pos
+                   (let* ((start (+ sub-pos (length "Subquestion: ")))
+                          (end (or (position #\Newline text :start start)
+                                   (length text))))
+                     (string-trim '(#\Space #\Tab #\Return) (subseq text start end)))))
+            (q (or (find sub questions :test #'string-equal)
+                   (find-if (lambda (q) (search q text)) questions))))
        (cond
          ((search "Gap analysis" text)
           (llm:make-llm-response
@@ -34,18 +42,35 @@
                           collect (make-research-subquestion
                                    :id (format nil "q~d" i)
                                    :question q)))))
+         ((or (search "ONE subquestion" text)
+              (search "research child" text)
+              (search "Subquestion:" text))
+          (llm:make-llm-response
+           :parts (list (llm:make-llm-text-part
+                         :text (format nil "ANSWER:~a [~a]"
+                                       (or q "unknown")
+                                       (if q
+                                           (format nil "src-~a"
+                                                   (substitute #\- #\Space q))
+                                           "src-1"))))))
          (t
           (llm:make-llm-response
-           :parts (list (llm:make-llm-text-part :text "synthesis ok")))))))))
+           :parts (list (llm:make-llm-text-part
+                         :text "Cited briefing over KSAR, the blackboard, and the journal.")))))))))
+
+(defun %hit-url (query)
+  (format nil "https://ex.test/~a" (substitute #\- #\Space (string query))))
 
 (defun %research-websearch ()
   (web:make-mock-websearch-backend
+   :pages (loop for q in *research-questions*
+                collect (cons (%hit-url q)
+                              (format nil "<p>ANSWER:~a page body for the workspace.</p>" q)))
    :handler
    (lambda (backend query &key &allow-other-keys)
      (declare (ignore backend))
      (list (web:make-search-hit
-            :url (format nil "https://ex.test/~a"
-                         (substitute #\- #\Space (string query)))
+            :url (%hit-url query)
             :title (string query)
             :snippet (format nil "ANSWER:~a" query)
             :rank 1
@@ -190,3 +215,75 @@
     (ok (eq :incomplete (getf result :verdict)))
     (ok (stringp (getf result :markdown)))
     (ok (search "incomplete" (string-downcase (getf result :markdown))))))
+
+(deftest deep-research-workspace-rag-and-mcp
+  "Fetched pages land on the board, RAG retrieve, and MCP resources."
+  (let* ((board (bb:make-blackboard))
+         (result (%run-research :task-id "research-workspace"
+                                :blackboard board))
+         (ws (getf result :workspace))
+         (sources (bb:read-section board :sources :default nil)))
+    (ok (research-workspace-p ws))
+    (ok (bb:section-bound-p board :sources))
+    (ok (bb:section-bound-p board :source-index))
+    (ok (bb:section-bound-p board :research-instructions))
+    (ok (>= (length sources) 3) "one fetched page per child")
+    (ok (every (lambda (s)
+                 (and (getf s :id) (getf s :uri)
+                      (plusp (or (getf s :chars) 0))))
+               sources))
+    (ok (search "planning KS" (research-instruction ws :plan)))
+    (ok (search "research child" (research-instruction ws :child)))
+    (ok (search "gap-analysis" (research-instruction ws :gap)))
+    (ok (search "synthesis KS" (research-instruction ws :synthesize)))
+    (let ((hits (retrieve-research-sources ws "KSAR" :top-k 2)))
+      (ok (plusp (length hits)))
+      (ok (getf (first hits) :id)))
+    (ok (research-workspace-mcp ws))
+    (let* ((listed (list-research-resources ws))
+           (uris (mapcar #'mcp:mcp-resource-uri listed)))
+      (ok (find "research://catalog" uris :test #'equal))
+      (ok (find "research://instructions/plan" uris :test #'equal))
+      (ok (find "research://instructions/expert" uris :test #'equal))
+      (ok (find-if (lambda (u) (eql (search "research://source/" u) 0)) uris)))
+    (let* ((first (first sources))
+           (uri (getf first :resource-uri))
+           (body (%mcp-resource-text-for-test (read-research-resource ws uri))))
+      (ok (search "ANSWER:" body)))
+    (dolist (child (getf result :children))
+      (ok (< (length (getf child :answer)) 400)
+          "child answer is a summary, not a page dump"))))
+
+(defun %mcp-resource-text-for-test (contents)
+  (cond
+    ((stringp contents) contents)
+    ((hash-table-p contents)
+     (let ((vec (gethash "contents" contents)))
+       (if (and vec (plusp (length vec)))
+           (gethash "text" (elt vec 0))
+           "")))
+    (t (princ-to-string contents))))
+
+(deftest deep-research-instruction-override
+  (let* ((custom "You are a test planning KS override. Decompose this question.")
+         (ws (make-research-workspace
+              :name "override"
+              :instructions (list :plan custom))))
+    (ok (equal custom (research-instruction ws :plan)))
+    (ok (search "research child" (research-instruction ws :child)))))
+
+(deftest deep-research-expert-instructions-from-domain
+  (let* ((domain (make-cl-dev-expert :backend (mock-llm) :name "ws-expert"
+                                     :ingest nil))
+         (board (bb:make-blackboard))
+         (result (run-deep-research domain "CL expert systems"
+                                    :max-rounds 1
+                                    :llm (%research-llm)
+                                    :websearch (%research-websearch)
+                                    :journal (task:make-in-memory-journal)
+                                    :task-id "research-expert"
+                                    :blackboard board))
+         (ws (getf result :workspace)))
+    (ok (search "Common Lisp" (research-instruction ws :expert)))
+    (ok (search "Common Lisp"
+                (getf (bb:read-section board :research-instructions) :expert)))))

@@ -196,53 +196,92 @@
   (or (ignore-errors (and websearch url (web:fetch-page websearch url)))
       (%browser-fetch-page browser url)))
 
-(defun %compose-child-answer (question rag-hits web-hits pages)
-  (with-output-to-string (s)
-    (format s "~a" question)
-    (dolist (h rag-hits)
-      (let ((tx (getf h :text)))
-        (when (and tx (plusp (length tx)))
-          (format s "~%~a" tx))))
-    (dolist (h web-hits)
-      (format s "~%~a — ~a"
-              (or (getf h :title) "")
-              (or (getf h :snippet) "")))
-    (dolist (p pages)
-      (when (and p (plusp (length p)))
-        (format s "~%~a" p)))))
+(defun %format-source-block (rec &key clip-chars)
+  (let ((id (getf rec :id))
+        (title (or (getf rec :title) ""))
+        (uri (or (getf rec :uri) ""))
+        (text (clip-research-text (or (getf rec :chunk-text) (getf rec :text) "")
+                                  clip-chars)))
+    (format nil "[~a] ~a~%  ~a~%  ~a~%" id title uri text)))
 
-(defun research-one-subquestion (input &key domain llm websearch browser (top-k 5))
-  "RAG retrieve + search-web + optional browser fetch-page. → plist."
+(defun %child-user-prompt (question retrieved &key clip-chars)
+  (with-output-to-string (s)
+    (format s "Subquestion: ~a~%~%" question)
+    (format s "Retrieved workspace sources (cite as [id]; full text at research://source/<id>):~%~%")
+    (if retrieved
+        (dolist (rec retrieved)
+          (write-string (%format-source-block rec :clip-chars clip-chars) s)
+          (terpri s))
+        (format s "(no workspace sources retrieved)~%"))))
+
+(defun %ingest-web-hits (workspace web-hits &key websearch browser subquestion)
+  (loop for h in web-hits
+        for n from 1
+        for url = (getf h :url)
+        for page = (and url (%fetch-source url :websearch websearch :browser browser))
+        for text = (or page (getf h :snippet) "")
+        for rec = (record-research-source
+                   workspace
+                   :id (format nil "~a-~d" (or subquestion "src") n)
+                   :uri url
+                   :title (getf h :title)
+                   :text text
+                   :subquestion subquestion
+                   :kind (if page :fetch :snippet))
+        collect rec))
+
+(defun research-one-subquestion (input &key domain llm websearch browser workspace
+                                        (top-k 5))
+  "Search + fetch onto the research workspace; generate a short cited answer."
   (when *research-child-exec-hook*
     (funcall *research-child-exec-hook* input))
   (let* ((question (or (getf input :question) ""))
          (id (or (getf input :id) question))
-         (rag-hits (%retrieve-corpus domain question :llm llm :top-k top-k))
+         (ws (or workspace
+                 (make-research-workspace :name id :domain domain)))
+         (clip (research-workspace-clip-chars ws))
+         (corpus-hits (%retrieve-corpus domain question :llm llm :top-k top-k))
          (hits (ignore-errors (web:search-web websearch question :count 5)))
          (web-hits (mapcar #'%hit-plist (or hits nil)))
-         (pages (loop for h in web-hits
-                      for url = (getf h :url)
-                      for text = (and url (%fetch-source url
-                                                         :websearch websearch
-                                                         :browser browser))
-                      when text collect text))
-         (answer (%compose-child-answer question rag-hits web-hits pages))
+         (recorded (%ingest-web-hits ws web-hits
+                                     :websearch websearch
+                                     :browser browser
+                                     :subquestion id))
+         (retrieved (retrieve-research-sources ws question :top-k top-k))
+         (user (%child-user-prompt question retrieved :clip-chars clip))
+         (response (generate-research-step llm :child user :workspace ws))
+         (answer (string-trim '(#\Space #\Tab #\Newline #\Return)
+                              (or (and response (llm:llm-response-text response)) "")))
          (citations (append
-                     (loop for h in rag-hits
-                           for id = (getf h :id)
-                           when id collect (list :kind :block-id :target id))
-                     (loop for h in web-hits
-                           for url = (getf h :url)
-                           when url collect (list :kind :link :target url)))))
+                     (loop for rec in retrieved
+                           for sid = (getf rec :id)
+                           when sid collect (list :kind :block-id :target sid))
+                     (loop for rec in retrieved
+                           for url = (getf rec :uri)
+                           when url collect (list :kind :link :target url))
+                     (loop for h in corpus-hits
+                           for cid = (getf h :id)
+                           when cid collect (list :kind :block-id :target cid)))))
     (list :id id
           :question question
-          :answer answer
+          :answer (if (plusp (length answer))
+                      answer
+                      (format nil "No grounded answer for ~a." question))
           :citations citations
-          :rag-hits rag-hits
-          :web-hits web-hits)))
+          :rag-hits (append corpus-hits
+                            (mapcar (lambda (r)
+                                      (list :id (getf r :id)
+                                            :text (clip-research-text
+                                                   (or (getf r :chunk-text)
+                                                       (getf r :text) "")
+                                                   clip)
+                                            :score (getf r :score)))
+                                    retrieved))
+          :web-hits web-hits
+          :source-ids (mapcar (lambda (r) (getf r :id)) recorded))))
 
 (defun %spawn-research-child (parent input &key domain llm websearch browser
-                             (top-k 5))
+                             workspace (top-k 5))
   (let ((child (task:spawn-child-task
                 parent
                 (lambda (in)
@@ -251,33 +290,65 @@
                                             :llm llm
                                             :websearch websearch
                                             :browser browser
+                                            :workspace workspace
                                             :top-k top-k))
                 :input input)))
     (when *research-child-hook*
       (funcall *research-child-hook* child input))
     child))
 
-(defun %plan-from-llm (llm question)
+(defun %plan-from-llm (llm question &key workspace)
   (let* ((prompt (format nil
                          "Decompose this question into a schema-typed research plan with subquestions: ~a"
                          question))
-         (response (llm:generate llm prompt :output 'research-plan))
+         (response (generate-research-step llm :plan prompt
+                                           :output 'research-plan
+                                           :workspace workspace))
          (out (or (and response (llm:llm-response-output response))
                   (and response (llm:llm-response-text response)))))
     (coerce-research-plan out :question question)))
 
-(defun %gap-from-llm (llm question children)
-  (let* ((blob (with-output-to-string (s)
+(defun %gap-from-llm (llm question children &key workspace)
+  (let* ((clip (if (research-workspace-p workspace)
+                   (research-workspace-clip-chars workspace)
+                   *default-research-clip-chars*))
+         (blob (with-output-to-string (s)
                  (dolist (c children)
                    (format s "~a => ~a~%"
-                           (getf c :question) (getf c :answer)))))
+                           (getf c :question)
+                           (clip-research-text (or (getf c :answer) "") clip)))))
          (prompt (format nil
                          "Gap analysis for ~a. Existing answers:~%~a~%Return new subquestions or none."
                          question blob))
-         (response (llm:generate llm prompt :output 'research-plan))
+         (response (generate-research-step llm :gap prompt
+                                           :output 'research-plan
+                                           :workspace workspace))
          (out (or (and response (llm:llm-response-output response))
                   (and response (llm:llm-response-text response)))))
     (coerce-research-plan out :question question)))
+
+(defun %synth-user-prompt (question children workspace)
+  (let ((clip (if (research-workspace-p workspace)
+                  (research-workspace-clip-chars workspace)
+                  *default-research-clip-chars*)))
+    (with-output-to-string (s)
+      (format s "Synthesize a cited report for ~a from ~d sub-answers.~%~%"
+              question (length children))
+      (format s "Child answers:~%")
+      (dolist (c children)
+        (format s "~%### ~a (~a)~%~a~%"
+                (or (getf c :question) "")
+                (or (getf c :id) "")
+                (clip-research-text (or (getf c :answer) "") clip)))
+      (format s "~%Source catalog:~%")
+      (if (research-workspace-p workspace)
+          (dolist (e (research-source-catalog workspace))
+            (format s "[~a] ~a — ~a (~d chars)~%"
+                    (getf e :id)
+                    (or (getf e :title) "")
+                    (or (getf e :uri) "")
+                    (or (getf e :chars) 0)))
+          (format s "(none)~%")))))
 
 (defun %annotate-text (text citations)
   "Build :link annotation-spans for CITATION targets found in TEXT."
@@ -383,12 +454,28 @@
       :pass
       :fail))
 
+(defun %result-extras (workspace)
+  (list :workspace workspace
+        :sources (and (research-workspace-p workspace)
+                      (research-source-catalog workspace))
+        :mcp-server (and (research-workspace-p workspace)
+                         (research-workspace-mcp workspace))))
+
+(defun %merge-research-workspace (workspace)
+  (when (and (research-workspace-p workspace)
+             (research-workspace-bb workspace))
+    (ignore-errors
+      (bb:merge-workspace (research-workspace-bb workspace)
+                          :strategy :overwrite))))
+
 (defun run-deep-research (domain question &key max-rounds budget
                                         llm websearch browser
                                         journal task-id blackboard
+                                        workspace store instructions
                                         (top-k 5))
   "Plan → spawn-child-task per sub-question → join :all → gap rounds →
    C3d extracted-document → A1 eval gate → C3e markdown (PDF if loaded).
+   Fetched pages land on a blackboard research workspace (RAG + MCP resources).
    Whole run is under an A2 budget scope."
   (check-type domain expert-domain)
   (check-type question string)
@@ -398,11 +485,24 @@
          (task (task:make-durable-task :id run-id :journal journal))
          (llm (wrap-research-llm (%llm-for domain llm) run-id :budget budget))
          (websearch (%websearch-for websearch))
-         (board (or blackboard (bb:make-blackboard)))
+         (root-board (or blackboard (bb:make-blackboard)))
+         (bb-ws (ignore-errors (bb:fork-workspace root-board run-id)))
+         (cow (or (and bb-ws (bb:workspace-blackboard bb-ws)) root-board))
+         (workspace (or workspace
+                        (make-research-workspace
+                         :name run-id
+                         :board cow
+                         :store store
+                         :instructions instructions
+                         :domain domain)))
+         (board (research-workspace-board workspace))
          (wf (make-project-workflow :name run-id :domain domain
                                     :board board :task task))
          (children '()))
+    (when bb-ws
+      (setf (research-workspace-bb workspace) bb-ws))
     (labels ((finish (plist)
+               (%merge-research-workspace workspace)
                (ignore-errors (task:complete-task task plist))
                (setf (project-workflow-status wf)
                      (if (eq (getf plist :verdict) :incomplete)
@@ -415,12 +515,13 @@
                  (report-workflow-progress
                   wf :board board :status :failed
                   :summary (format nil "incomplete: ~a" reason))
-                 (finish (list :verdict :incomplete
-                               :question question
-                               :children kids
-                               :markdown md
-                               :document-text md
-                               :reason reason))))
+                 (finish (append (list :verdict :incomplete
+                                       :question question
+                                       :children kids
+                                       :markdown md
+                                       :document-text md
+                                       :reason reason)
+                                 (%result-extras workspace)))))
              (run-rounds (pending)
                (loop for round from 1 to max-rounds
                      while pending
@@ -429,6 +530,7 @@
                            task q
                            :domain domain :llm llm
                            :websearch websearch :browser browser
+                           :workspace workspace
                            :top-k top-k))
                         (let ((joined
                                (task:with-durable-step
@@ -455,7 +557,8 @@
                                                  (lambda ()
                                                    (research-plan-plist
                                                     (%gap-from-llm
-                                                     llm question children)))))))
+                                                     llm question children
+                                                     :workspace workspace)))))))
                                   (remove-if
                                    (lambda (q)
                                      (or (null (getf q :question))
@@ -467,11 +570,11 @@
                            ("synthesize" :idempotency-key "research/synthesize")
                          (%phase "synthesize"
                                  (lambda ()
-                                   (let* ((prompt
-                                           (format nil
-                                                   "Synthesize a cited report for ~a from ~d sub-answers."
-                                                   question (length children)))
-                                          (resp (llm:generate llm prompt))
+                                   (let* ((prompt (%synth-user-prompt
+                                                   question children workspace))
+                                          (resp (generate-research-step
+                                                 llm :synthesize prompt
+                                                 :workspace workspace))
                                           (text (or (and resp
                                                          (llm:llm-response-text resp))
                                                     "")))
@@ -500,13 +603,14 @@
                  (report-workflow-progress
                   wf :board board :status :completed
                   :summary (format nil "delivered ~a" verdict))
-                 (finish (list :verdict verdict
-                               :question question
-                               :children children
-                               :markdown md
-                               :document-text md
-                               :eval-mean (getf run :mean)
-                               :eval-n (getf run :n))))))
+                 (finish (append (list :verdict verdict
+                                       :question question
+                                       :children children
+                                       :markdown md
+                                       :document-text md
+                                       :eval-mean (getf run :mean)
+                                       :eval-n (getf run :n))
+                                 (%result-extras workspace))))))
       (task:with-durable-task (task journal)
         (when (eq (task:durable-task-status task) :completed)
           (return-from run-deep-research
@@ -523,7 +627,8 @@
                        (%phase "plan"
                                (lambda ()
                                  (research-plan-plist
-                                  (%plan-from-llm llm question)))))))
+                                  (%plan-from-llm llm question
+                                                  :workspace workspace)))))))
                 (report-workflow-progress
                  wf :board board :round 0 :status :working
                  :summary (format nil "plan ~a subquestions"
