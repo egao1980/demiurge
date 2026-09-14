@@ -160,8 +160,13 @@ narration = \"normal\"
   (with-clean-registry
     (with-tmp-dir (tmp)
       (let ((toml (merge-pathnames "expert.toml" tmp))
-            (queries (merge-pathnames "queries.md" tmp)))
+            (queries (merge-pathnames "queries.md" tmp))
+            (src (asdf:system-relative-pathname "demiurge"
+                                                "tests/fixtures/corpus/")))
         (uiop:copy-file (%echo-toml) toml)
+        (let ((dest (ensure-directories-exist (merge-pathnames "corpus/" tmp))))
+          (dolist (file (uiop:directory-files src))
+            (uiop:copy-file file (merge-pathnames (file-namestring file) dest))))
         (with-open-file (out queries :direction :output :if-exists :supersede
                              :if-does-not-exist :create)
           (format out "# comment~%ingest: corpus~%improve:~%"))
