@@ -148,7 +148,7 @@
                        :uri ns
                        :content text
                        :hash (content-hash bytes)
-                       :format (%infer-format ns)))))
+                       :format (%infer-format ns))))))
 
 (defclass imap-source (ingest-source)
   ((client :initarg :client :accessor imap-source-client :initform nil)
