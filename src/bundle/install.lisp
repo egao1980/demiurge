@@ -192,32 +192,113 @@
 (defun %keywordize (name)
   (intern (string-upcase (string name)) :keyword))
 
-(defun %ks-from-definition (def llm)
+(defun %tool-grant-ops (def)
+  (let ((raw (%read-sexp (bundle-ks-definition-tool-grants def) nil)))
+    (cond
+      ((null raw) nil)
+      ((stringp raw) (list raw))
+      ((and (consp raw) (keywordp (first raw)))
+       (list (or (getf raw :op) (getf raw :name))))
+      ((listp raw)
+       (loop for item in raw
+             collect (cond
+                       ((stringp item) item)
+                       ((symbolp item) (string-downcase (symbol-name item)))
+                       ((and (consp item) (keywordp (first item)))
+                        (or (getf item :op) (getf item :name)
+                            (princ-to-string item)))
+                       (t (princ-to-string item)))))
+      (t nil))))
+
+(defun %declared-op-names (catalogue)
+  (let ((names '()))
+    (when (typep catalogue 'cap:capability-catalogue)
+      (dolist (row (cap:list-capabilities catalogue))
+        (let* ((cname (getf row :name))
+               (cap (and cname (cap:get-capability catalogue cname))))
+          (when cname
+            (push (string-downcase (string cname)) names))
+          (when cap
+            (dolist (op (cap:capability-operations cap))
+              (let ((op-name (cap:capability-operation-name op)))
+                (push (string-downcase (string op-name)) names)
+                (push (format nil "~a/~a"
+                              (string-downcase (string (cap:capability-name cap)))
+                              (string-downcase (string op-name)))
+                      names)))))))
+    names))
+
+(defun %assert-declared-ops (catalogue ops &key skill-names mcp-url)
+  "Config may only reference declared ops, skill tools, or an MCP URL."
+  (let ((declared (append (%declared-op-names catalogue)
+                          (mapcar (lambda (s) (string-downcase (string s)))
+                                  skill-names))))
+    (dolist (op ops)
+      (when (and op (plusp (length (string op))))
+        (let ((key (string-downcase (string op))))
+          (unless (or (member key declared :test #'equal)
+                      (and mcp-url (plusp (length mcp-url))))
+            (error 'invalid-expert
+                   :message (format nil "config cannot define new ops; ~s is not declared (built-in, skill tool, or MCP URL)"
+                                    op))))))))
+
+(defun %maybe-versioned-ks (ks split-ratio)
+  (let ((ratio (cond
+                 ((integerp split-ratio) split-ratio)
+                 ((and (realp split-ratio) (plusp split-ratio))
+                  (max 1 (round split-ratio)))
+                 (t 0))))
+    (if (plusp ratio)
+        (let* ((pkg (find-package :demiurge/improve))
+               (fn (and pkg (find-symbol "MAKE-VERSIONED-KS" pkg))))
+          (if (and fn (fboundp fn))
+              (funcall fn :name (bb:ks-name ks)
+                       :current ks
+                       :split-ratio ratio)
+              ks))
+        ks)))
+
+(defun %ks-from-definition (def llm &key catalogue skill-names)
   (let* ((name (intern (string-upcase (bundle-ks-definition-name def))
                        :demiurge))
          (watch (let ((w (%read-sexp (bundle-ks-definition-watch def)
                                      '(:prompt))))
                   (if (listp w) w (list w))))
+         (mcp-url (or (bundle-ks-definition-mcp-url def) ""))
+         (ops (%tool-grant-ops def))
          (agent (agent:make-ai-agent
                  :name (bundle-ks-definition-name def)
                  :backend llm
                  :instructions (or (bundle-ks-definition-instructions def)
                                    "Echo the user."))))
-    (make-agent-ks :name name
-                   :agent agent
-                   :watch watch
-                   :prompt-key (%keywordize
-                                (bundle-ks-definition-prompt-key def))
-                   :result-key (%keywordize
-                                (bundle-ks-definition-result-key def)))))
+    (when ops
+      (%assert-declared-ops catalogue ops
+                            :skill-names skill-names
+                            :mcp-url mcp-url))
+    (let ((ks (make-agent-ks
+               :name name
+               :agent agent
+               :watch watch
+               :prompt-key (%keywordize
+                            (bundle-ks-definition-prompt-key def))
+               :result-key (%keywordize
+                            (bundle-ks-definition-result-key def))
+               :catalogue catalogue
+               :mcp-peer (and (plusp (length mcp-url)) mcp-url))))
+      (%maybe-versioned-ks ks (bundle-ks-definition-split-ratio def)))))
+
+(defun %catalogue-name-from-vocab (vocab)
+  (let ((sexp (%read-sexp vocab '(:world))))
+    (cond
+      ((keywordp sexp) sexp)
+      ((and (consp sexp) (or (keywordp (first sexp)) (symbolp (first sexp))))
+       (intern (symbol-name (first sexp)) :keyword))
+      ((symbolp sexp) (intern (symbol-name sexp) :keyword))
+      ((stringp sexp) (intern (string-upcase sexp) :keyword))
+      (t :world))))
 
 (defun %catalogue-from-vocab (vocab)
-  (let ((sexp (%read-sexp vocab '(:world))))
-    (cap:make-catalogue
-     (cond
-       ((keywordp sexp) sexp)
-       ((and (consp sexp) (keywordp (first sexp))) (first sexp))
-       (t :world)))))
+  (cap:make-catalogue (%catalogue-name-from-vocab vocab)))
 
 (defun %datasets-from-manifest (manifest)
   (loop for ref in (expert-bundle-manifest-eval-datasets manifest)
@@ -262,22 +343,29 @@
         (push root dirs)))
     (nreverse dirs)))
 
-(defun %domain-from-manifest (manifest &key profile llm eval-suites corpora)
+(defun %domain-from-manifest (manifest &key profile llm eval-suites corpora
+                                        steering skill-names)
   (let* ((llm (or llm (%llm-for profile nil)))
+         (catalogue (%catalogue-from-vocab
+                     (expert-bundle-manifest-catalogue-vocab manifest)))
          (defs (expert-bundle-manifest-ks-definitions manifest))
          (ks-set (if defs
-                     (mapcar (lambda (d) (%ks-from-definition d llm)) defs)
+                     (mapcar (lambda (d)
+                               (%ks-from-definition
+                                d llm
+                                :catalogue catalogue
+                                :skill-names skill-names))
+                             defs)
                      (expert-ks-set
                       (make-echo-expert
                        :backend llm
                        :name (expert-bundle-manifest-name manifest)
                        :profile (or profile :personal))))))
-    (make-expert-domain
+    (instantiate-expert-domain
      :name (expert-bundle-manifest-name manifest)
-     :catalogue (%catalogue-from-vocab
-                 (expert-bundle-manifest-catalogue-vocab manifest))
+     :catalogue catalogue
      :ks-set ks-set
-     :steering nil
+     :steering steering
      :corpora corpora
      :eval-suites (or eval-suites (%datasets-from-manifest manifest))
      :profile (or profile :personal))))

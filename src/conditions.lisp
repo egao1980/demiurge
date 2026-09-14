@@ -21,6 +21,27 @@
              (format s "invalid expert-domain~@[: ~A~]"
                      (demiurge-error-message c)))))
 
+(define-condition expert-config-error (invalid-expert)
+  ((path :initarg :path :reader expert-config-error-path :initform nil)
+   (issues :initarg :issues :reader expert-config-error-issues :initform nil))
+  (:report (lambda (c s)
+             (format s "expert.toml error~@[ (~A)~]~@[: ~A~]"
+                     (expert-config-error-path c)
+                     (demiurge-error-message c)))))
+
+(define-condition unknown-expert-config-key (expert-config-error)
+  ((key :initarg :key :reader unknown-expert-config-key-name :initform nil)
+   (valid-keys :initarg :valid-keys :reader unknown-expert-config-valid-keys
+               :initform nil)
+   (section :initarg :section :reader unknown-expert-config-section
+            :initform nil))
+  (:report (lambda (c s)
+             (format s "unknown expert.toml key ~S~@[ in ~A~]; valid keys: ~{~A~^, ~}~@[: ~A~]"
+                     (unknown-expert-config-key-name c)
+                     (unknown-expert-config-section c)
+                     (unknown-expert-config-valid-keys c)
+                     (demiurge-error-message c)))))
+
 (define-condition missing-event-backend (demiurge-error)
   ()
   (:report (lambda (c s)

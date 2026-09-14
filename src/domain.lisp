@@ -82,8 +82,13 @@
         (%coerce-eval-suites (expert-eval-suites domain)))
   (setf (expert-profile domain) (%coerce-profile (expert-profile domain))))
 
-(defun make-expert-domain (&key name catalogue ks-set knowledge-sources
-                             steering corpora eval-suites (profile :personal))
+(defun instantiate-expert-domain (&key name catalogue ks-set knowledge-sources
+                                    steering corpora eval-suites
+                                    (profile :personal)
+                                    &allow-other-keys)
+  "Single construction path for MAKE-EXPERT-DOMAIN, DEFEXPERT,
+   LOAD-EXPERT-CONFIG, and INSTALL-EXPERT. Live objects only —
+   serializable specs are resolved by the caller (bundle loader)."
   (make-instance 'expert-domain
                  :name name
                  :catalogue catalogue
@@ -92,6 +97,24 @@
                  :corpora corpora
                  :eval-suites eval-suites
                  :profile profile))
+
+(defun make-expert-domain (&key name catalogue ks-set knowledge-sources
+                             steering corpora eval-suites (profile :personal))
+  (instantiate-expert-domain
+   :name name
+   :catalogue catalogue
+   :ks-set ks-set
+   :knowledge-sources knowledge-sources
+   :steering steering
+   :corpora corpora
+   :eval-suites eval-suites
+   :profile profile))
+
+(defun load-expert-config (path &rest args)
+  "Defined by demiurge/bundle. Core stub so the #:demiurge export is fbound."
+  (declare (ignore path args))
+  (error 'expert-config-error
+         :message "load the demiurge/bundle system to use load-expert-config"))
 
 (defun register-expert (domain)
   (check-type domain expert-domain)
@@ -141,10 +164,11 @@
     (values doc (nreverse options))))
 
 (defmacro defexpert (name &body body)
-  "Thin sugar: MAKE-INSTANCE 'EXPERT-DOMAIN + REGISTER-EXPERT.
+  "Thin sugar over INSTANTIATE-EXPERT-DOMAIN + REGISTER-EXPERT.
    Options: (:catalogue form) (:ks-set form) (:knowledge-sources form)
             (:steering form) (:corpora form) (:eval-suites form)
-            (:profile form). Everything is reachable via MAKE-INSTANCE."
+            (:profile form). Same construction path as LOAD-EXPERT-CONFIG
+            and INSTALL-EXPERT. Everything is reachable via MAKE-INSTANCE."
   (multiple-value-bind (doc options)
       (%parse-defexpert-body body)
     (declare (ignore doc))
@@ -161,8 +185,8 @@
            (setf initargs (list* :eval-suites (second opt) initargs)))
           (:profile (setf initargs (list* :profile (second opt) initargs)))))
       `(register-expert
-        (make-instance 'expert-domain
-                       :name ,(if (stringp name)
-                                  name
-                                  (string-downcase (symbol-name name)))
-                       ,@initargs)))))
+        (instantiate-expert-domain
+         :name ,(if (stringp name)
+                    name
+                    (string-downcase (symbol-name name)))
+         ,@initargs)))))

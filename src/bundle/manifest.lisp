@@ -47,6 +47,14 @@
               :accessor bundle-ks-definition-result-key)
   (instructions string :optional t :default ""
                 :accessor bundle-ks-definition-instructions)
+  (skill-ref string :optional t :default ""
+             :accessor bundle-ks-definition-skill-ref)
+  (tool-grants string :optional t :default "()"
+               :accessor bundle-ks-definition-tool-grants)
+  (mcp-url string :optional t :default ""
+           :accessor bundle-ks-definition-mcp-url)
+  (split-ratio integer :optional t :default 0
+               :accessor bundle-ks-definition-split-ratio)
   (:key-style :kebab)
   (:extra :allow))
 
@@ -196,7 +204,11 @@
         :watch (bundle-ks-definition-watch d)
         :prompt-key (bundle-ks-definition-prompt-key d)
         :result-key (bundle-ks-definition-result-key d)
-        :instructions (bundle-ks-definition-instructions d)))
+        :instructions (bundle-ks-definition-instructions d)
+        :skill-ref (or (bundle-ks-definition-skill-ref d) "")
+        :tool-grants (or (bundle-ks-definition-tool-grants d) "()")
+        :mcp-url (or (bundle-ks-definition-mcp-url d) "")
+        :split-ratio (or (bundle-ks-definition-split-ratio d) 0)))
 
 (defun %readable-provenance (p)
   (if (null p)
@@ -276,7 +288,11 @@
      :watch (or (%g p :watch) "(:prompt)")
      :prompt-key (or (%g p :prompt-key) "prompt")
      :result-key (or (%g p :result-key) "result")
-     :instructions (or (%g p :instructions) ""))))
+     :instructions (or (%g p :instructions) "")
+     :skill-ref (or (%g p :skill-ref) "")
+     :tool-grants (or (%g p :tool-grants) "()")
+     :mcp-url (or (%g p :mcp-url) "")
+     :split-ratio (or (%g p :split-ratio) 0))))
 
 (defun %parse-provenance (x)
   (if (null x)
@@ -337,14 +353,22 @@
                                     (watch "(:prompt)")
                                     (prompt-key "prompt")
                                     (result-key "result")
-                                    (instructions ""))
+                                    (instructions "")
+                                    (skill-ref "")
+                                    (tool-grants "()")
+                                    (mcp-url "")
+                                    (split-ratio 0))
   (make-instance 'bundle-ks-definition
                  :name name
                  :kind (or kind "agent-ks")
                  :watch (or watch "(:prompt)")
                  :prompt-key (or prompt-key "prompt")
                  :result-key (or result-key "result")
-                 :instructions (or instructions "")))
+                 :instructions (or instructions "")
+                 :skill-ref (or skill-ref "")
+                 :tool-grants (or tool-grants "()")
+                 :mcp-url (or mcp-url "")
+                 :split-ratio (or split-ratio 0)))
 
 (defun make-bundle-provenance (&key cycle-ids eval-run-ids (built-at ""))
   (make-instance 'bundle-provenance
@@ -387,6 +411,22 @@
                                             (cap:capability-operations cap)))))))
     (t (list catalogue))))
 
+(defun %ks-mcp-url (ks)
+  (let ((peer (and (agent-ks-p ks) (agent-ks-mcp-peer ks))))
+    (cond
+      ((null peer) "")
+      ((stringp peer) peer)
+      ((pathnamep peer) (namestring peer))
+      (t (princ-to-string peer)))))
+
+(defun %ks-split-ratio (ks)
+  (let* ((pkg (find-package :demiurge/improve))
+         (pred (and pkg (find-symbol "VERSIONED-KS-P" pkg)))
+         (reader (and pkg (find-symbol "VERSIONED-KS-SPLIT-RATIO" pkg))))
+    (if (and pred reader (fboundp pred) (funcall pred ks))
+        (or (funcall reader ks) 0)
+        0)))
+
 (defun %ks-definition (ks)
   (let ((agent (and (agent-ks-p ks) (agent-ks-agent ks))))
     (make-bundle-ks-definition
@@ -403,7 +443,9 @@
                   (string (if (agent-ks-p ks)
                               (agent-ks-result-key ks)
                               :result)))
-     :instructions (or (and agent (agent:ai-agent-instructions agent)) ""))))
+     :instructions (or (and agent (agent:ai-agent-instructions agent)) "")
+     :mcp-url (%ks-mcp-url ks)
+     :split-ratio (%ks-split-ratio ks))))
 
 (defun %profile-defaults-sexp (profile)
   (cond

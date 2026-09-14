@@ -41,7 +41,8 @@
                             "log-backend-log4cl"
                             "telemetry-backend-otlp"
                             "crypto-backend-ironclad"
-                            "json-backend-jzon"))))
+                            "json-backend-jzon"
+                            "toml-backend-tomlet"))))
   :serial t
   :pathname "src"
   :components ((:file "package")
@@ -162,6 +163,7 @@
   :depends-on ("demiurge"
                "demiurge/ingest"
                "schema-protocol"
+               "toml-protocol"
                "steer-protocol"
                "eval-protocol"
                "task-protocol"
@@ -176,7 +178,8 @@
   :components ((:file "package")
                (:file "manifest")
                (:file "pack")
-               (:file "install")))
+               (:file "install")
+               (:file "expert-config")))
 
 (defsystem "demiurge/tests"
   :depends-on ("demiurge" "demiurge/improve" "demiurge/observe"
@@ -186,6 +189,7 @@
                "sql-backend-sqlite3"
                "crypto-backend-ironclad"
                "json-backend-jzon"
+               "toml-backend-tomlet"
                "rove")
   :pathname "tests"
   :serial t
@@ -201,6 +205,7 @@
                (:file "ingest-test")
                (:file "workflows-test")
                (:file "bundle-test")
+               (:file "expert-config-test")
                (:file "corporate-test"))
   :perform (test-op (o c)
              (unless (symbol-call :rove :run c)

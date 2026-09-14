@@ -1,0 +1,154 @@
+(in-package #:demiurge/tests)
+
+(defun %cl-dev-toml ()
+  (asdf:system-relative-pathname "demiurge" "examples/cl-dev-expert.toml"))
+
+(defun %skill-names (domain)
+  (let* ((steering (expert-steering domain))
+         (dirs (cond
+                 ((null steering) nil)
+                 ((steer:steering-source-p steering)
+                  (steer:list-directives steering))
+                 ((listp steering) steering)
+                 (t (ignore-errors
+                      (steer:list-directives (steer:coerce-steering steering)))))))
+    (sort (mapcar #'steer:steer-directive-name
+                  (remove-if-not (lambda (d)
+                                   (eq (steer:steer-directive-kind d) :skill))
+                                 (or dirs '())))
+          #'string<)))
+
+(defun %ks-name (ks)
+  (string-downcase (string (bb:ks-name ks))))
+
+(defun %corpus-basenames (domain)
+  (sort (mapcar (lambda (c)
+                  (file-namestring
+                   (pathname (etypecase c
+                               (pathname c)
+                               (string c)
+                               (t (princ-to-string c))))))
+                (expert-corpora domain))
+        #'string<))
+
+(defun %dataset-name (domain)
+  (let ((ds (first (expert-eval-suites domain))))
+    (and ds (eval:eval-dataset-name ds))))
+
+(deftest golden-cl-dev-toml-matches-lisp
+  "examples/cl-dev-expert.toml ≡ make-cl-dev-expert / defexpert on identity fields."
+  (with-clean-registry
+    (let* ((llm (mock-llm))
+           (from-lisp (make-cl-dev-expert :backend llm :name "cl-dev"))
+           (from-toml (load-expert-config (%cl-dev-toml) :llm llm))
+           (from-def (defexpert cl-dev
+                       (:catalogue :cl-dev)
+                       (:profile :personal))))
+      (ok (expert-domain-p from-toml))
+      (ok (equal (expert-name from-toml) (expert-name from-lisp)))
+      (ok (equal (expert-name from-toml) (expert-name from-def)))
+      (ok (eq (cap:catalogue-name (expert-catalogue from-toml))
+              (cap:catalogue-name (expert-catalogue from-lisp))))
+      (ok (eq (cap:catalogue-name (expert-catalogue from-toml))
+              (cap:catalogue-name (expert-catalogue from-def))))
+      (ok (eq :cl-dev (cap:catalogue-name (expert-catalogue from-toml))))
+      (let ((ks-t (first (expert-ks-set from-toml)))
+            (ks-l (first (expert-ks-set from-lisp))))
+        (ok (agent-ks-p ks-t))
+        (ok (equal (%ks-name ks-t) (%ks-name ks-l)))
+        (ok (equal (agent-ks-watch ks-t) (agent-ks-watch ks-l)))
+        (ok (equal (agent:ai-agent-instructions (agent-ks-agent ks-t))
+                   (agent:ai-agent-instructions (agent-ks-agent ks-l)))))
+      (ok (equal (%skill-names from-toml) (%skill-names from-lisp)))
+      (ok (member "cl-stack.md" (%corpus-basenames from-lisp) :test #'equal))
+      (ok (find-if (lambda (c)
+                     (search "corpus" (if (stringp c) c (namestring c))
+                             :test #'char-equal))
+                   (expert-corpora from-toml))
+          "toml corpora refs include the bundled corpus")
+      (ok (equal (%dataset-name from-toml) (%dataset-name from-lisp)))
+      (ok (equal "cl-dev" (%dataset-name from-toml))))))
+
+(deftest-parametrize expert-config-schema-errors
+    ((label toml)
+     ("missing-name" "[expert]
+description = \"no name\"
+")
+     ("bad-name-type" "[expert]
+name = 1
+")
+     ("missing-expert" "[profile]
+kind = \"personal\"
+"))
+  (let ((path (%write-tmp-toml toml)))
+    (ok (signals (load-expert-config path) 'expert-config-error)
+        label)))
+
+(deftest unknown-key-continue-lists-valid-keys
+  "Unknown key signals UNKNOWN-EXPERT-CONFIG-KEY; CONTINUE proceeds and lists valid keys."
+  (let* ((path (%write-tmp-toml "
+[expert]
+name = \"unknown-key-demo\"
+catalogue = \"world\"
+mystery = true
+"))
+         (report nil)
+         (domain
+          (handler-bind
+              ((unknown-expert-config-key
+                (lambda (c)
+                  (let ((r (find-restart 'continue c)))
+                    (ok (not (null r)))
+                    (setf report (and r (princ-to-string r)))
+                    (ok (member "mystery"
+                                (list (unknown-expert-config-key-name c))
+                                :test #'equal))
+                    (ok (member "name"
+                                (unknown-expert-config-valid-keys c)
+                                :test #'equal))
+                    (invoke-restart r)))))
+            (load-expert-config path :llm (mock-llm)))))
+    (ok (expert-domain-p domain))
+    (ok (equal "unknown-key-demo" (expert-name domain)))
+    (ok (and report (search "name" report))
+        "continue restart report lists valid keys")))
+
+(deftest undeclared-op-is-rejected
+  "Config can only reference declared ops — invented names are invalid-expert."
+  (let ((path (%write-tmp-toml "
+[expert]
+name = \"cap-bound\"
+catalogue = \"world\"
+
+[[ks]]
+name = \"echo\"
+watch = \"(:prompt)\"
+tool-grants = [\"invented-op\"]
+")))
+    (ok (signals (load-expert-config path :llm (mock-llm))
+                 'invalid-expert))))
+
+(deftest expert-config-pack-install-round-trip
+  "config → pack-expert → install-expert is still runnable."
+  (with-clean-registry
+    (clear-bundle-installs)
+    (with-tmp-dir (tmp)
+      (let* ((llm (mock-llm))
+             (journal (task:make-in-memory-journal))
+             (domain (load-expert-config (%cl-dev-toml) :llm llm))
+             (packed (pack-expert domain
+                                  :registry (merge-pathnames "oci/" tmp)
+                                  :version "1.0.0")))
+        (ok (expert-bundle-manifest-p (getf packed :manifest)))
+        (clear-expert-registry)
+        (let ((result (install-expert packed
+                                      :journal journal
+                                      :task-id "expert-config-round-trip"
+                                      :llm llm)))
+          (ok (equal "cl-dev" (getf result :name)))
+          (let ((installed (find-expert "cl-dev")))
+            (ok (expert-domain-p installed))
+            (ok (eq :cl-dev (cap:catalogue-name (expert-catalogue installed))))
+            (let ((board (run-expert installed :trigger '(:prompt "hi"))))
+              (ok (bb:section-bound-p board :result))
+              (ok (stringp (bb:read-section board :result))))))))))

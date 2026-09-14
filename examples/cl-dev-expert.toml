@@ -1,0 +1,49 @@
+# Golden declarative form of examples/cl-dev-expert.lisp.
+# Catalogue :cl-dev and lisp-dev methods stay in Lisp; this file only references them.
+
+[expert]
+name = "cl-dev"
+description = "Common Lisp / cl-stack development expert."
+catalogue = "cl-dev"
+
+[profile]
+kind = "personal"
+
+[llm]
+default-model = "mock"
+
+[[corpus]]
+kind = "file"
+spec = "corpus"
+pattern = "*.md"
+store = "memory"
+
+[[skill]]
+name = "cite-docs"
+
+[[skill]]
+name = "prefer-protocols"
+
+[[skill]]
+name = "no-guess"
+
+[[ks]]
+name = "cl-dev"
+watch = "(:prompt)"
+prompt-key = "prompt"
+result-key = "result"
+instructions = "You are a Common Lisp / cl-stack expert. Use lookup-symbol and search-corpus. Cite docs. Do not guess."
+
+[[eval]]
+name = "cl-dev"
+gate = "no-critical-regression"
+
+[serve]
+transports = ["stdio", "http"]
+host = "127.0.0.1"
+port = 8080
+
+[improve]
+enabled = false
+schedule = ""
+hitl = false

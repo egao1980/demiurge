@@ -28,6 +28,13 @@
    #:unknown-expert
    #:unknown-expert-name
    #:invalid-expert
+   #:expert-config-error
+   #:expert-config-error-path
+   #:expert-config-error-issues
+   #:unknown-expert-config-key
+   #:unknown-expert-config-key-name
+   #:unknown-expert-config-valid-keys
+   #:unknown-expert-config-section
    #:missing-event-backend
    #:compute-denied
    #:persistence-error
@@ -104,6 +111,8 @@
    #:expert-domain
    #:expert-domain-p
    #:make-expert-domain
+   #:instantiate-expert-domain
+   #:load-expert-config
    #:expert-name
    #:expert-catalogue
    #:expert-ks-set
