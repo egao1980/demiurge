@@ -1,6 +1,7 @@
 (defpackage #:demiurge/tests
   (:use #:cl #:rove #:demiurge #:demiurge/improve #:demiurge/observe
-        #:demiurge/serve #:demiurge/ingest #:demiurge/workflows)
+        #:demiurge/serve #:demiurge/ingest #:demiurge/workflows
+        #:demiurge/bundle)
   (:shadowing-import-from #:demiurge #:run-tests)
   (:local-nicknames (#:bb #:blackboard-protocol)
                     (#:cap #:capability-protocol)
