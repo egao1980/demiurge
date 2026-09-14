@@ -181,10 +181,11 @@
                      :time (get-universal-time))))
     (push entry *capability-denial-audit*)
     (when log:*log-backend*
-      (log:warn "capability denied"
-                :op operation
-                :principal (or principal *principal*)
-                :tenant (or tenant *tenant*)))
+      (ignore-errors
+        (log:warn "capability denied"
+                  :op operation
+                  :principal (or principal *principal*)
+                  :tenant (or tenant *tenant*))))
     entry))
 
 (defclass granted-capability (cap:capability)
