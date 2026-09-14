@@ -316,10 +316,9 @@
       (values text fid board))))
 
 (defun %call-research (domain topic &rest keys)
-  "Call RUN-DEEP-RESEARCH. IGNORE-OUTPUT on LLM-OUTPUT-ERROR so a mock
-   backend (no llm-protocol/schema) still reaches COALESCE-RESEARCH-PLAN."
-  (llm:with-auto-ignore-output
-    (apply #'wf:run-deep-research domain topic keys)))
+  "Call RUN-DEEP-RESEARCH. Plan/gap output errors retry then fail;
+   they are not ignored."
+  (apply #'wf:run-deep-research domain topic keys))
 
 (defun cmd-research (opts free)
   (let* ((path (%require-option opts :config "--config is required"))

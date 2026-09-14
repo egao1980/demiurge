@@ -124,18 +124,44 @@
   (let ((schema (llm:structured-output-json-schema 'research-plan)))
     (ok (hash-table-p schema))))
 
-(deftest generate-research-step-keeps-text-on-output-error
-  "Observe-wrapped backends re-signal LLM-OUTPUT-ERROR without IGNORE-OUTPUT."
-  (let* ((bare (llm:make-mock-llm-backend
+(deftest generate-research-step-retries-then-dies-with-completion
+  "Invalid JSON retries, then RESEARCH-ERROR includes the raw completion."
+  (let* ((*research-output-attempts* 2)
+         (n 0)
+         (bare (llm:make-mock-llm-backend
                 :handler (lambda (backend turns &key &allow-other-keys)
                            (declare (ignore backend turns))
+                           (incf n)
                            (llm:make-llm-response
                             :parts (list (llm:make-llm-text-part :text "not-json"))))))
+         (llm (wrap-llm-observe bare :expert "t" :scope "t")))
+    (handler-case
+        (progn
+          (generate-research-step llm :plan "CL expert systems"
+                                  :output 'research-plan)
+          (ok nil "expected research-error"))
+      (research-error (e)
+        (ok (search "not-json" (or (demiurge-error-message e) "")))
+        (ok (search "2" (or (demiurge-error-message e) "")))))
+    (ok (= 2 n))))
+
+(deftest generate-research-step-retry-succeeds
+  (let* ((*research-output-attempts* 3)
+         (n 0)
+         (bare (llm:make-mock-llm-backend
+                :handler (lambda (backend turns &key &allow-other-keys)
+                           (declare (ignore backend turns))
+                           (incf n)
+                           (llm:make-llm-response
+                            :parts (list (llm:make-llm-text-part
+                                          :text (if (= n 1)
+                                                    "not-json"
+                                                    "{\"question\":\"q\",\"subquestions\":[{\"id\":\"q1\",\"question\":\"KSAR\",\"rationale\":\"\"}]}")))))))
          (llm (wrap-llm-observe bare :expert "t" :scope "t"))
-         (r (generate-research-step llm :plan "CL expert systems"
-                                    :output 'research-plan)))
+         (r (generate-research-step llm :plan "q" :output 'research-plan)))
+    (ok (= 2 n))
     (ok (llm:llm-response-p r))
-    (ok (search "not-json" (or (llm:llm-response-text r) "")))))
+    (ok (research-plan-p (llm:llm-response-output r)))))
 
 (deftest deep-research-e2e-mock-llm-websearch
   (let* ((board (bb:make-blackboard))

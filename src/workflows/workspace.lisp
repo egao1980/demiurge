@@ -352,21 +352,46 @@ Retrieve with retrieve-research-sources (RAG) or MCP read-resource."
              (or (getf rec :text) "")))
           (t "")))))
 
+(defparameter *research-output-attempts* 3
+  "GENERATE attempts for a schema-typed research step before RESEARCH-ERROR.")
+
+(defun %llm-response-text (response)
+  (or (and response (llm:llm-response-text response)) ""))
+
 (defun generate-research-step (llm step user-text &key output workspace instructions)
-  "system-turn (step instructions) + user-turn. → llm-response.
-   Structured-output failures (observe router drops IGNORE-OUTPUT) keep the
-   text response so COALESCE-RESEARCH-PLAN can still run."
+  "system-turn + user-turn. → llm-response.
+   :OUTPUT parse/empty misses invoke RETRY. After *RESEARCH-OUTPUT-ATTEMPTS*
+   the run dies with RESEARCH-ERROR carrying the raw completion. No IGNORE-OUTPUT."
   (let* ((sys (research-instruction (or workspace instructions) step))
          (turns (list (llm:system-turn sys)
-                      (llm:user-turn (or user-text "")))))
-    (if output
-        (handler-case (llm:generate llm turns :output output)
-          (llm:llm-output-error (e)
-            (or (llm:llm-output-error-response e)
-                (progn
-                  (warn "~a; retrying ~a without structured output" e step)
-                  (llm:generate llm turns)))))
-        (llm:generate llm turns))))
+                      (llm:user-turn (or user-text ""))))
+         (attempts 0))
+    (flet ((once ()
+             (if output
+                 (llm:generate llm turns :output output)
+                 (llm:generate llm turns))))
+      (handler-bind
+          ((llm:llm-output-error
+            (lambda (c)
+              (incf attempts)
+              (when (< attempts *research-output-attempts*)
+                (llm:invoke-retry c))
+              (let ((text (string-trim '(#\Space #\Tab #\Newline #\Return)
+                                       (%llm-response-text
+                                        (llm:llm-output-error-response c)))))
+                (error 'research-error
+                       :message (format nil
+                                        "~a structured output failed after ~d attempt~:p~@[; completion: ~s~]"
+                                        step attempts
+                                        (and (plusp (length text)) text)))))))
+        (let ((r (once)))
+          (when (and output
+                     (null (llm:llm-response-output r))
+                     (zerop (length (string-trim '(#\Space #\Tab #\Newline #\Return)
+                                                 (%llm-response-text r)))))
+            (error 'research-error
+                   :message (format nil "~a returned an empty completion" step)))
+          r)))))
 
 (defun %domain-expert-instructions (domain)
   (when (expert-domain-p domain)

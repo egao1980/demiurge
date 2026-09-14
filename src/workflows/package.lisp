@@ -93,6 +93,7 @@
    #:research-source-uri
    #:clip-research-text
    #:generate-research-step
+   #:*research-output-attempts*
    #:ensure-research-mcp-server
    #:list-research-resources
    #:read-research-resource
