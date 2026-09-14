@@ -28,11 +28,19 @@
                  :question (or question "")
                  :rationale (or rationale "")))
 
+(defun %as-plain-list (x)
+  "jzon decodes JSON arrays as vectors; MAPCAR needs a list."
+  (cond
+    ((null x) nil)
+    ((listp x) x)
+    ((and (vectorp x) (not (stringp x))) (coerce x 'list))
+    (t (list x))))
+
 (defun make-research-plan (&key question subquestions)
   (make-instance 'research-plan
                  :question (or question "")
                  :subquestions (mapcar #'coerce-subquestion
-                                       (or subquestions nil))))
+                                       (%as-plain-list subquestions))))
 
 (defun %ht-get (table key)
   (or (gethash key table)

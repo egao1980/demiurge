@@ -76,6 +76,24 @@
                      :task-id (or task-id "research-e2e")
                      :blackboard blackboard))
 
+(deftest make-research-plan-accepts-jzon-vector
+  "jzon decodes JSON arrays as vectors; plan construction must not MAPCAR them."
+  (let* ((row (make-hash-table :test 'equal))
+         (rows nil)
+         (plan nil))
+    (setf (gethash "id" row) "q2"
+          (gethash "question" row) "blackboard")
+    (setf rows (vector (make-research-subquestion :id "q1" :question "KSAR")
+                       row))
+    (setf plan (make-research-plan :question "CL" :subquestions rows))
+    (ok (= 2 (length (research-plan-subquestions plan))))
+    (ok (equal "KSAR"
+               (research-subquestion-question
+                (first (research-plan-subquestions plan)))))
+    (ok (equal "blackboard"
+               (research-subquestion-question
+                (second (research-plan-subquestions plan)))))))
+
 (deftest deep-research-e2e-mock-llm-websearch
   (let* ((board (bb:make-blackboard))
          (result (%run-research :task-id "research-e2e"
