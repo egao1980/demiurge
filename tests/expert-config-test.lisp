@@ -158,3 +158,29 @@ tool-grants = [\"invented-op\"]
             (let ((board (run-expert installed :trigger '(:prompt "hi"))))
               (ok (bb:section-bound-p board :result))
               (ok (stringp (bb:read-section board :result))))))))))
+
+(deftest expert-config-llm-catalog-and-websearch-from-toml
+  "[[llm.catalog]] builds a profile catalog; [websearch] binds the backend."
+  (with-clean-registry
+    (let* ((path (%write-tmp-toml "
+[expert]
+name = \"catalog-demo\"
+
+[llm]
+default-model = \"mock\"
+
+[[llm.catalog]]
+name = \"mock\"
+kind = \"mock\"
+prefix = \"from-toml: \"
+
+[websearch]
+kind = \"mock\"
+"))
+           (domain (load-expert-config path))
+           (prof (expert-profile domain)))
+      (ok (expert-domain-p domain))
+      (ok (deployment-profile-p prof))
+      (ok (equal "mock" (profile-default-model prof)))
+      (ok (profile-llm-catalog prof))
+      (ok (web:websearch-backend-p web:*websearch-backend*)))))

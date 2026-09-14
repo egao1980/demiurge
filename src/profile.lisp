@@ -39,6 +39,26 @@
     (when kind
       (intern (string-upcase (string kind)) :keyword))))
 
+(defun %ensure-http-backend ()
+  "Soft-bind http-backend-dexador so openai-compat / SearXNG can SEND."
+  (let* ((http (find-package '#:http-protocol))
+         (star (and http (find-symbol "*HTTP-BACKEND*" http))))
+    (when (and star (symbol-value star))
+      (return-from %ensure-http-backend t)))
+  (when (%try-load "http-backend-dexador")
+    (let ((fn (find-symbol "MAKE-DEXADOR-BACKEND" :http-backend-dexador))
+          (http (find-package '#:http-protocol)))
+      (when (and fn (fboundp fn) http)
+        (let ((star (find-symbol "*HTTP-BACKEND*" http))
+              (client (find-symbol "*HTTP-CLIENT*" http))
+              (make-c (find-symbol "MAKE-HTTP-CLIENT" http))
+              (backend (funcall fn)))
+          (when star (setf (symbol-value star) backend))
+          (when (and client make-c)
+            (setf (symbol-value client)
+                  (funcall make-c backend :timeout 300)))
+          t)))))
+
 (defun %make-catalog-backend (entry)
   "Build an llm-protocol backend from a catalog entry. Soft-loads natives."
   (let ((kind (%catalog-kind entry))
@@ -48,7 +68,9 @@
        (values name (llm:make-mock-llm-backend
                      :prefix (or (getf entry :prefix) "echo: "))))
       ((member kind '(:lmstudio :lm-studio :openai :openai-compat) :test #'eq)
-       (if (%try-load "llm-protocol-openai")
+       (progn
+         (%ensure-http-backend)
+         (if (%try-load "llm-protocol-openai")
            (let ((fn (find-symbol "MAKE-OPENAI-COMPAT-BACKEND"
                                  :llm-protocol-openai)))
              (if (and fn (fboundp fn))
@@ -60,7 +82,10 @@
                                   :default-model (or (getf entry :model)
                                                      (getf entry :default-model)
                                                      "local")
-                                  :api-key (getf entry :api-key)))
+                                  :api-key (or (getf entry :api-key)
+                                               (let ((env (getf entry :api-key-env)))
+                                                 (and env (plusp (length env))
+                                                      (uiop:getenv env)))))))
                  (values nil nil)))
            (values nil nil)))
       ((member kind '(:llama-cpp :llamacpp :gguf) :test #'eq)

@@ -172,6 +172,7 @@
                "task-protocol"
                "doc-extract-protocol"
                "llm-protocol"
+               "websearch-protocol"
                "rag-protocol"
                "capability-protocol"
                "blackboard-protocol"

@@ -110,6 +110,8 @@
             :accessor expert-config-llm-entry-endpoint)
   (api-key string :optional t :default ""
            :accessor expert-config-llm-entry-api-key)
+  (api-key-env string :optional t :default ""
+               :accessor expert-config-llm-entry-api-key-env)
   (model-path string :optional t :default ""
               :accessor expert-config-llm-entry-model-path)
   (:key-style :kebab)
@@ -245,12 +247,25 @@
   (:key-style :kebab)
   (:extra :forbid))
 
+(schema:defschema expert-config-websearch ()
+  "Websearch backend referenced by research (mock fixtures or SearXNG)."
+  (kind string :optional t :default "mock"
+        :accessor expert-config-websearch-kind)
+  (base-url string :optional t :default ""
+            :accessor expert-config-websearch-base-url)
+  (fixtures string :optional t :default ""
+            :accessor expert-config-websearch-fixtures)
+  (:key-style :kebab)
+  (:extra :forbid))
+
 (schema:defschema expert-config ()
   "Declarative expert.toml document. Extra keys are forbidden."
   (expert expert-config-expert :accessor expert-config-expert)
   (profile expert-config-profile :optional t :default nil
            :accessor expert-config-profile)
   (llm expert-config-llm :optional t :default nil :accessor expert-config-llm)
+  (websearch expert-config-websearch :optional t :default nil
+             :accessor expert-config-websearch)
   (corpus (list expert-config-corpus) :optional t :default nil
           :accessor expert-config-corpus)
   (skill (list expert-config-skill) :optional t :default nil
@@ -506,11 +521,74 @@
              (%maybe p #'expert-config-profile-improve)
              (%maybe p #'expert-config-profile-corporate))))
 
+(defun %env-or (name)
+  (let ((v (and name (plusp (length name)) (uiop:getenv name))))
+    (and v (plusp (length v)) v)))
+
+(defun %llm-entry-plist (e)
+  (list :name (or (expert-config-llm-entry-name e) "")
+        :kind (or (let ((k (expert-config-llm-entry-kind e)))
+                    (and k (plusp (length k)) k))
+                  (let ((k (expert-config-llm-entry-type e)))
+                    (and k (plusp (length k)) k))
+                  (expert-config-llm-entry-backend e))
+        :model (or (let ((m (expert-config-llm-entry-model e)))
+                     (and m (plusp (length m)) m))
+                   (expert-config-llm-entry-default-model e))
+        :default-model (expert-config-llm-entry-default-model e)
+        :prefix (expert-config-llm-entry-prefix e)
+        :base-url (or (let ((u (expert-config-llm-entry-base-url e)))
+                        (and u (plusp (length u)) u))
+                      (expert-config-llm-entry-endpoint e))
+        :endpoint (expert-config-llm-entry-endpoint e)
+        :api-key (or (let ((k (expert-config-llm-entry-api-key e)))
+                       (and k (plusp (length k)) k))
+                     (%env-or (expert-config-llm-entry-api-key-env e)))
+        :api-key-env (expert-config-llm-entry-api-key-env e)
+        :model-path (expert-config-llm-entry-model-path e)))
+
+(defun %llm-catalog-entries (config)
+  (let ((section (%maybe config #'expert-config-llm)))
+    (when section
+      (or (expert-config-llm-catalog section)
+          (expert-config-llm-catalogue section)))))
+
+(defun %apply-llm-section (cfg config)
+  (let ((section (%maybe config #'expert-config-llm)))
+    (when section
+      (let ((default (expert-config-llm-default-model section)))
+        (when (and default (plusp (length default)))
+          (setf (demiurge-config-llm-default-model cfg) default)))
+      (let ((entries (%llm-catalog-entries config)))
+        (when entries
+          (setf (demiurge-config-llm-catalog cfg)
+                (mapcar #'%llm-entry-plist entries))))))
+  cfg)
+
+(defun %bind-websearch-from-config (config)
+  "Bind WEB:*WEBSEARCH-BACKEND* from [websearch] (searxng | mock)."
+  (let ((ws (%maybe config #'expert-config-websearch)))
+    (when ws
+      (let* ((kind (string-downcase (or (expert-config-websearch-kind ws) "mock")))
+             (url (expert-config-websearch-base-url ws)))
+        (setf web:*websearch-backend*
+              (if (member kind '("searxng" "searx" "live") :test #'equal)
+                  (progn
+                    (demiurge::%ensure-http-backend)
+                    (web:make-searxng-backend)
+                   :base-url (if (and url (plusp (length url)))
+                                 url
+                                 "http://127.0.0.1:8888"))
+                  (web:make-mock-websearch-backend))))
+      web:*websearch-backend*)))
+
 (defun %config-profile (config &key hitl)
   (let ((kind (%profile-kind config))
         (p (expert-config-profile config)))
-    (if (or hitl (%profile-has-overrides-p p) (eq kind :corporate))
+    (if (or hitl (%profile-has-overrides-p p) (eq kind :corporate)
+            (%llm-catalog-entries config))
         (let ((cfg (make-instance 'demiurge-config)))
+          (%apply-llm-section cfg config)
           (when p
             (let ((ag (expert-config-profile-agenda p))
                   (ks (expert-config-profile-ksar p))
@@ -726,13 +804,7 @@
          (improve (%maybe config #'expert-config-improve))
          (hitl (and improve (%maybe improve #'expert-config-improve-hitl)))
          (profile (or profile (%config-profile config :hitl hitl)))
-         (llm (or llm
-                  (let ((section (expert-config-llm config)))
-                    (when (and section
-                               (equal (expert-config-llm-default-model section)
-                                      "mock"))
-                      (llm:make-mock-llm-backend)))
-                  (%llm-for profile nil)))
+         (llm (or llm (%llm-for profile nil) (llm:make-mock-llm-backend)))
          (skills (%skills-from-config config base))
          (steering (and skills (steer:coerce-steering skills)))
          (manifest (%config-to-manifest config))
@@ -744,6 +816,7 @@
                   :skill-names (%skill-names-from-config config)
                   :eval-suites (%eval-suites-from-config config base)
                   :corpora (%corpus-refs-from-config config base))))
+    (%bind-websearch-from-config config)
     (when register
       (register-expert domain))
     domain))

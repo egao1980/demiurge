@@ -7,6 +7,7 @@
                     (#:steer #:steer-protocol)
                     (#:eval #:eval-protocol)
                     (#:llm #:llm-protocol)
+                    (#:web #:websearch-protocol)
                     (#:task #:task-protocol)
                     (#:rag #:rag-protocol)
                     (#:schema #:schema-protocol)

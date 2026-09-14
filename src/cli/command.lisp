@@ -390,9 +390,10 @@
               list))))
 
 (defun %bind-mock-websearch (spec)
-  "Bind a fixtures-backed mock websearch when websearch=mock or a fixtures file exists."
-  (let ((hits (%fixture-hits (getf spec :websearch-fixtures))))
-    (when (or hits (eq (getf spec :websearch) :mock))
+  "Bind fixtures-backed mock websearch only when the tier is :mock.
+   Live/auto use [websearch] from expert.toml (load-expert-config)."
+  (when (eq (getf spec :websearch) :mock)
+    (let ((hits (%fixture-hits (getf spec :websearch-fixtures))))
       (setf web:*websearch-backend*
             (web:make-mock-websearch-backend
              :handler
@@ -425,7 +426,10 @@
              :citations (%board-citations board))))
     (:research
      (%demo-look-at spec "verdict, child answers, citations, rendered report")
-     (let ((got (%call-research domain question)))
+     (let ((got (if (eq (getf spec :llm) :mock)
+                    (%call-research domain question
+                                    :llm (llm:make-mock-llm-backend))
+                    (%call-research domain question))))
        (%demo-kv spec "verdict" (or (getf got :verdict) :unknown))
        (%demo-kv spec "child count" (length (getf got :children)))
        (when (getf got :markdown)
