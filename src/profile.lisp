@@ -189,6 +189,7 @@
     (let* ((llm (ignore-errors (resolve-profile-llm profile)))
            (bare (and llm (bare-llm-backend llm))))
       (list :model (profile-default-model profile)
+            :backend-model (ignore-errors (llm:backend-model bare))
             :providers (mapcar #'llm:llm-provider-name
                                (or (ignore-errors
                                      (llm:list-providers (profile-llm-catalog profile)))

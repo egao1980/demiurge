@@ -70,6 +70,8 @@
    #:*research-child-hook*
    #:*research-child-exec-hook*
    #:*research-phase-hook*
+   #:*research-trace-stream*
+   #:research-trace
    #:research-budget-scope
    #:wrap-research-llm
    #:run-deep-research

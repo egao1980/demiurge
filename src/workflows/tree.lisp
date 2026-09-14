@@ -225,6 +225,7 @@
   (let ((root (research-tree-root ws)))
     (unless root
       (return-from ingest-workspace-hits nil))
+    (research-trace "workspace walk ~a" (pathlib:as-posix root))
     (loop for hit in (search-research-tree root query :top-k top-k)
           for rel = (getf hit :rel)
           for text = (or (read-research-tree-file root rel) "")

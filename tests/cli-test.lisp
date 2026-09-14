@@ -88,6 +88,8 @@
                             "--out" (namestring out)
                             "What is KSAR?"))
           (ok (= 0 status) (format nil "~a~%~a" stdout err))
+          (ok (search "LLM generate" stdout)
+              "research CLI prints live LLM request lines")
           (ok (probe-file out))
           (ok (or (null (probe-file out))
                   (plusp (length (uiop:read-file-string out))))))))))

@@ -112,6 +112,7 @@
   "Optional (lambda (phase-name)) invoked at the start of a live durable phase.")
 
 (defun %phase (name thunk)
+  (research-trace "phase ~a" name)
   (when *research-phase-hook*
     (funcall *research-phase-hook* name))
   (funcall thunk))
@@ -235,50 +236,59 @@
          (ws (or workspace
                  (make-research-workspace :name id :domain domain)))
          (clip (research-workspace-clip-chars ws))
-         (corpus-hits (%retrieve-corpus domain question :llm llm :top-k top-k))
-         (workspace-hits (ignore-errors
-                           (ingest-workspace-hits ws question
-                                                  :top-k top-k
-                                                  :subquestion id)))
-         (hits (ignore-errors (web:search-web websearch question :count 5)))
-         (web-hits (mapcar #'%hit-plist (or hits nil)))
-         (recorded (append (or workspace-hits '())
-                           (%ingest-web-hits ws web-hits
-                                             :websearch websearch
-                                             :browser browser
-                                             :subquestion id)))
-         (retrieved (retrieve-research-sources ws question :top-k top-k))
-         (user (%child-user-prompt question retrieved :clip-chars clip))
-         (response (generate-research-step llm :child user :workspace ws))
-         (answer (string-trim '(#\Space #\Tab #\Newline #\Return)
-                              (or (and response (llm:llm-response-text response)) "")))
-         (citations (append
-                     (loop for rec in retrieved
-                           for sid = (getf rec :id)
-                           when sid collect (list :kind :block-id :target sid))
-                     (loop for rec in retrieved
-                           for url = (getf rec :uri)
-                           when url collect (list :kind :link :target url))
-                     (loop for h in corpus-hits
-                           for cid = (getf h :id)
-                           when cid collect (list :kind :block-id :target cid)))))
-    (list :id id
-          :question question
-          :answer (if (plusp (length answer))
-                      answer
-                      (format nil "No grounded answer for ~a." question))
-          :citations citations
-          :rag-hits (append corpus-hits
-                            (mapcar (lambda (r)
-                                      (list :id (getf r :id)
-                                            :text (clip-research-text
-                                                   (or (getf r :chunk-text)
-                                                       (getf r :text) "")
-                                                   clip)
-                                            :score (getf r :score)))
-                                    retrieved))
-          :web-hits web-hits
-          :source-ids (mapcar (lambda (r) (getf r :id)) recorded))))
+         (corpus-hits (%retrieve-corpus domain question :llm llm :top-k top-k)))
+    (research-trace "child ~a ~s" id question)
+    (research-trace "workspace ingest ~a" id)
+    (let* ((workspace-hits (ignore-errors
+                             (ingest-workspace-hits ws question
+                                                    :top-k top-k
+                                                    :subquestion id)))
+           (hits (progn
+                   (research-trace "workspace ingest ~a hits=~d"
+                                   id (length (or workspace-hits '())))
+                   (research-trace "websearch ~s" question)
+                   (ignore-errors (web:search-web websearch question :count 5))))
+           (web-hits (mapcar #'%hit-plist (or hits nil)))
+           (recorded (progn
+                       (research-trace "websearch ~s hits=~d"
+                                       question (length web-hits))
+                       (append (or workspace-hits '())
+                               (%ingest-web-hits ws web-hits
+                                                 :websearch websearch
+                                                 :browser browser
+                                                 :subquestion id))))
+           (retrieved (retrieve-research-sources ws question :top-k top-k))
+           (user (%child-user-prompt question retrieved :clip-chars clip))
+           (response (generate-research-step llm :child user :workspace ws))
+           (answer (string-trim '(#\Space #\Tab #\Newline #\Return)
+                                (or (and response (llm:llm-response-text response)) "")))
+           (citations (append
+                       (loop for rec in retrieved
+                             for sid = (getf rec :id)
+                             when sid collect (list :kind :block-id :target sid))
+                       (loop for rec in retrieved
+                             for url = (getf rec :uri)
+                             when url collect (list :kind :link :target url))
+                       (loop for h in corpus-hits
+                             for cid = (getf h :id)
+                             when cid collect (list :kind :block-id :target cid)))))
+      (list :id id
+            :question question
+            :answer (if (plusp (length answer))
+                        answer
+                        (format nil "No grounded answer for ~a." question))
+            :citations citations
+            :rag-hits (append corpus-hits
+                              (mapcar (lambda (r)
+                                        (list :id (getf r :id)
+                                              :text (clip-research-text
+                                                     (or (getf r :chunk-text)
+                                                         (getf r :text) "")
+                                                     clip)
+                                              :score (getf r :score)))
+                                      retrieved))
+            :web-hits web-hits
+            :source-ids (mapcar (lambda (r) (getf r :id)) recorded)))))
 
 (defun %spawn-research-child (parent input &key domain llm websearch browser
                              workspace (top-k 5))

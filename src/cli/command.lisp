@@ -5,6 +5,22 @@
 (defvar *serve-start* t
   "Bound to NIL in tests so SERVE-EXPERT does not open sockets.")
 
+(defun %unbuffer-stdio ()
+  "SBCL full-buffers fd streams when stdout is a pipe (run-demo.sh | tee).
+   Switch stdout/stderr to line buffering so ── LLM lines appear live."
+  #+sbcl
+  (flet ((linebuf (stream)
+           (let ((inner (if (typep stream 'synonym-stream)
+                            (symbol-value (synonym-stream-symbol stream))
+                            stream)))
+             (when (and (typep inner 'sb-sys:fd-stream)
+                        (fboundp 'sb-impl::fd-stream-buffering))
+               (setf (sb-impl::fd-stream-buffering inner) :line)))))
+    (linebuf *standard-output*)
+    (linebuf *error-output*))
+  (force-output *standard-output*)
+  (force-output *error-output*))
+
 (defun %require-option (opts key usage)
   (or (cli:get-option opts key)
       (error 'cli:cli-usage-error :message usage)))
@@ -251,20 +267,24 @@
               :narration :normal
               :websearch-fixtures nil))))
 
+(defun %demo-flush ()
+  (force-output *standard-output*)
+  (finish-output *standard-output*))
+
 (defun %demo-narrate (spec fmt &rest args)
   (unless (eq (getf spec :narration) :quiet)
     (format t "~&~%── ~?~%" fmt args)
-    (finish-output)))
+    (%demo-flush)))
 
 (defun %demo-look-at (spec fmt &rest args)
   (when (eq (getf spec :narration) :verbose)
     (format t "~&   look at: ~?~%" fmt args)
-    (finish-output)))
+    (%demo-flush)))
 
 (defun %demo-kv (spec key value)
   (unless (eq (getf spec :narration) :quiet)
     (format t "~&   ~A: ~S~%" key value)
-    (finish-output)))
+    (%demo-flush)))
 
 (defun %print-improve (spec result)
   (%demo-kv spec "verdict" (or (getf result :verdict) :unknown))
@@ -328,6 +348,7 @@
          (rounds (cli:get-option opts :rounds))
          (out (cli:get-option opts :out))
          (domain (%load-domain path))
+         (wf:*research-trace-stream* *standard-output*)
          (result (if rounds
                      (%call-research domain topic :max-rounds rounds)
                      (%call-research domain topic))))
@@ -474,7 +495,9 @@
     (%demo-kv spec "websearch" (getf spec :websearch))
     (let ((sum (profile-backend-summary (expert-profile domain))))
       (when sum
-        (%demo-kv spec "llm-model" (getf sum :model))
+        (%demo-kv spec "llm-provider" (getf sum :model))
+        (%demo-kv spec "llm-model" (or (getf sum :backend-model)
+                                       (getf sum :model)))
         (%demo-kv spec "llm-class" (getf sum :llm-class))
         (%demo-kv spec "llm-providers" (getf sum :providers))))
     (when web:*websearch-backend*
@@ -482,6 +505,8 @@
       (when (web:searxng-backend-p web:*websearch-backend*)
         (%demo-kv spec "websearch-url" (web:searxng-base-url web:*websearch-backend*))))
     (%bind-mock-websearch spec)
+    (unless (eq (getf spec :narration) :quiet)
+      (setf wf:*research-trace-stream* *standard-output*))
     (when (eq (getf spec :narration) :quiet)
       (format t "demo ~a expert ~a command ~a~%"
               dir (expert-name domain) default-cmd))
@@ -596,6 +621,7 @@
 
 (defun run-cli (argv &key (command (make-app)))
   "Parse + run ARGV. Returns an exit status (0/1/2) without UIOP:QUIT."
+  (%unbuffer-stdio)
   (handler-case
       (progn
         (%invoke command (%cli-argv argv))

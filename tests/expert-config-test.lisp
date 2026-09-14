@@ -220,6 +220,7 @@ base-url = \"http://127.0.0.1:8888\"
       (ok (equal "lmstudio" (profile-default-model prof)))
       (ok (find "lmstudio" (getf sum :providers) :test #'equal))
       (ok (eq (type-of llm) (getf sum :llm-class)))
+      (ok (equal "prism-ml/bonsai-27b" (getf sum :backend-model)))
       (ok (not (search "MOCK" (string (type-of llm)))))
       (ok (web:searxng-backend-p web:*websearch-backend*))
       (ok (equal "http://127.0.0.1:8888"

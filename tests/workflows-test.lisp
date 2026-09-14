@@ -147,6 +147,20 @@
         (ok (search "2" (or (demiurge-error-message e) "")))))
     (ok (= 2 n))))
 
+(deftest generate-research-step-traces-llm
+  "Live demo needs these lines flushed before GENERATE blocks on HTTP."
+  (let* ((out (make-string-output-stream))
+         (*research-trace-stream* out)
+         (llm (llm:make-mock-llm-backend
+               :handler (lambda (backend turns &key &allow-other-keys)
+                          (declare (ignore backend turns))
+                          (llm:make-llm-response
+                           :parts (list (llm:make-llm-text-part :text "ok")))))))
+    (generate-research-step llm :child "hello")
+    (let ((s (get-output-stream-string out)))
+      (ok (search "LLM GENERATE :CHILD" (string-upcase s)))
+      (ok (search "DONE" (string-upcase s))))))
+
 (deftest generate-research-step-retry-succeeds
   (let* ((*research-output-attempts* 3)
          (n 0)
