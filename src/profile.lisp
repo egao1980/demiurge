@@ -112,7 +112,7 @@
       ((member kind '(:lmstudio :lm-studio :openai :openai-compat) :test #'eq)
        (unless (%ensure-http-backend)
          (error 'expert-config-error
-                :message "openai-compat catalog entry needs http-backend-async (or dexador fallback)")))
+                :message "openai-compat catalog entry needs http-backend-async (or dexador fallback)"))
        (let ((fn (%require-catalog-symbol "llm-protocol-openai"
                                           :llm-protocol-openai
                                           "MAKE-OPENAI-COMPAT-BACKEND")))
