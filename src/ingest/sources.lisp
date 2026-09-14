@@ -343,7 +343,7 @@
                    :hash (content-hash bytes)
                    :format (%infer-format key)
                    :metadata (list :bucket bucket :key key :etag etag
-                                   :object-store store))))))
+                                   :object-store store)))))
 
 ;;; Fallback extractor so .md/.txt ingest works without a live office backend.
 (defclass plain-text-extractor (doc:doc-extract-backend) ())
