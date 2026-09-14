@@ -166,12 +166,9 @@
 
 (defun wrap-llm-budget (llm cycle-id &key budget)
   "Wrap LLM in a router budget-policy scoped to (:IMPROVE CYCLE-ID).
-   BUDGET NIL leaves LLM unchanged."
-  (if (null budget)
-      llm
-      (llm:make-llm-router-backend
-       :policy (llm:make-budget-policy
-                :inner (llm:make-fallback-chain-policy :candidates (list llm))
-                :budget budget)
-       :candidates (list llm)
-       :scope (improve-budget-scope cycle-id))))
+   Always meters via A2 record-usage → observe RECORD-LLM-USAGE.
+   Unwraps an existing profile router so usage is counted once."
+  (wrap-llm-observe (bare-llm-backend llm)
+                    :budget budget
+                    :scope (improve-budget-scope cycle-id)
+                    :expert "improve"))

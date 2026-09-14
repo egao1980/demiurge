@@ -4,6 +4,7 @@
   (:local-nicknames (#:doc #:doc-extract-protocol)
                     (#:obj #:object-store-protocol)
                     (#:mail #:mail-protocol)
+                    (#:mime #:mime-protocol)
                     (#:pathlib #:cl-stack-pathlib)
                     (#:rag #:rag-protocol)
                     (#:rag.text #:rag-backend-text)

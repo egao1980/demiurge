@@ -70,6 +70,9 @@
 
    #:call-with-ksar-observe
    #:call-with-agent-observe
+   #:record-agenda-depth
+   #:wrap-llm-observe
+   #:bare-llm-backend
 
    #:open-domain-journal
    #:attach-domain-journal

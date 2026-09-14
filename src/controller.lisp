@@ -71,6 +71,10 @@
      (loop for (key value) on trigger by #'cddr
            do (bb:write-section blackboard key value)))))
 
+(defmethod bb:enqueue-ksar :after (bb ksar)
+  (declare (ignore ksar))
+  (record-agenda-depth bb))
+
 (defun run-controller (controller &key (until-empty t) timeout trigger)
   "Write optional TRIGGER sections, then RUN-SCHEDULER until the agenda is
    empty (or START-SCHEDULER when UNTIL-EMPTY is NIL). If STOP-SECTION is
@@ -86,7 +90,9 @@
       (return-from run-controller board))
     (flet ((run ()
              (%write-trigger board trigger)
+             (record-agenda-depth board)
              (bb:run-scheduler board :until-empty until-empty :timeout timeout)
+             (record-agenda-depth board)
              board))
       (if (and journal task)
           (let ((task:*task* task)
