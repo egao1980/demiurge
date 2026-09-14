@@ -12,7 +12,7 @@
                     (#:log #:log-protocol)
                     (#:mcp #:mcp-protocol)
                     (#:agent #:ai-agent-protocol)
-                    (#:pathlib #:cl-stack-pathlib)))
+                    (#:pathlib #:cl-stack-pathlib))
   (:export
    #:workflows-error
    #:approval-required
