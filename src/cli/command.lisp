@@ -586,7 +586,7 @@
   "Parse + run ARGV. Returns an exit status (0/1/2) without UIOP:QUIT."
   (handler-case
       (progn
-        (%invoke command argv)
+        (%invoke command (%cli-argv argv))
         0)
     (cli:cli-exit (e)
       (cli:cli-exit-code e))
@@ -605,6 +605,13 @@
     (error (e)
       (format *error-output* "~&~a~%" e)
       1)))
+
+(defun %cli-argv (argv)
+  "Drop a leading -- that SBCL/UIOP leaves in COMMAND-LINE-ARGUMENTS."
+  (let ((argv (or argv (uiop:command-line-arguments))))
+    (if (and argv (equal (first argv) "--"))
+        (rest argv)
+        argv)))
 
 (defun main (&optional argv)
   (uiop:quit (run-cli (or argv (uiop:command-line-arguments)))))

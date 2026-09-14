@@ -14,6 +14,16 @@
             (get-output-stream-string *standard-output*)
             (get-output-stream-string *error-output*))))
 
+(deftest cli-argv-strips-sbcl-dash-dash
+  (with-clean-registry
+    (with-tmp-dir (tmp)
+      (uiop:copy-file (%echo-toml) (merge-pathnames "expert.toml" tmp))
+      (with-open-file (out (merge-pathnames "queries.md" tmp)
+                           :direction :output :if-exists :supersede
+                           :if-does-not-exist :create)
+        (write-string "hi~%" out))
+      (ok (= 0 (%run-cli (list "--" "demo" (namestring tmp))))))))
+
 (deftest cli-parse-table
   "Each subcommand + key options parse with no side effects."
   (let ((app (make-app)))
