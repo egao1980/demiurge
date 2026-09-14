@@ -9,7 +9,8 @@
                     (#:wf #:demiurge/workflows)
                     (#:bundle #:demiurge/bundle)
                     (#:toml #:toml-protocol)
-                    (#:doc #:doc-extract-protocol))
+                    (#:doc #:doc-extract-protocol)
+                    (#:llm #:llm-protocol))
   (:export
    #:*serve-start*
    #:make-app

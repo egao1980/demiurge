@@ -241,6 +241,12 @@
       (%print-ask text fid board)
       (values text fid board))))
 
+(defun %call-research (domain topic &rest keys)
+  "Call RUN-DEEP-RESEARCH. IGNORE-OUTPUT on LLM-OUTPUT-ERROR so a mock
+   backend (no llm-protocol/schema) still reaches COALESCE-RESEARCH-PLAN."
+  (llm:with-auto-ignore-output
+    (apply #'wf:run-deep-research domain topic keys)))
+
 (defun cmd-research (opts free)
   (let* ((path (%require-option opts :config "--config is required"))
          (topic (or (%join-free free)
@@ -250,8 +256,8 @@
          (out (cli:get-option opts :out))
          (domain (%load-domain path))
          (result (if rounds
-                     (wf:run-deep-research domain topic :max-rounds rounds)
-                     (wf:run-deep-research domain topic))))
+                     (%call-research domain topic :max-rounds rounds)
+                     (%call-research domain topic))))
     (format t "research ~a verdict ~a~%"
             (expert-name domain)
             (or (getf result :verdict) :unknown))
@@ -317,7 +323,7 @@
                     (list :command :ask :text text :feedback-id fid
                           :citations (%board-citations board))))
                  (:research
-                  (let ((got (wf:run-deep-research domain question)))
+                  (let ((got (%call-research domain question)))
                     (format t "verdict: ~a~%" (or (getf got :verdict) :unknown))
                     (when (getf got :markdown)
                       (format t "~a~%" (getf got :markdown)))

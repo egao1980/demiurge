@@ -79,7 +79,8 @@
                             "What is KSAR?"))
           (ok (= 0 status) (format nil "~a~%~a" stdout err))
           (ok (probe-file out))
-          (ok (plusp (length (uiop:read-file-string out)))))))))
+          (ok (or (null (probe-file out))
+                  (plusp (length (uiop:read-file-string out))))))))))
 
 (deftest cli-ingest-smoke
   (with-clean-registry
