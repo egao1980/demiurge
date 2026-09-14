@@ -158,7 +158,7 @@
       (setf chunks (%plain-chunks item)))
     (%embed-and-upsert store embedder chunks)
     (list :hash hash
-          :chunk-ids (mapcar #'rag:rag-chunk-id chunks)))))
+          :chunk-ids (mapcar #'rag:rag-chunk-id chunks))))
 
 (defun sweep-deleted-items (store live-hashes)
   "Mark-and-sweep: drop chunks whose content-hash is not in LIVE-HASHES.
