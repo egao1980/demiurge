@@ -283,8 +283,17 @@ issuer = \"https://file.example\"
                  'tenant-isolation-error))
     (ok (equal "tenant/acme/domain/echo" (assert-tenant-scope
                                           (tenant-task-id "echo"))))
-    (ok (equal "acme" (tenant-of-reference "tenant/acme/session/alice"))))
-  (ok (null (tenant-of-reference "domain/echo"))))
+    (ok (equal "acme" (tenant-of-reference "tenant/acme/session/alice")))
+    (ok (equal "tenant/acme/corpus/docs" (tenant-corpus-name "docs")))
+    (ok (equal '(:tenant "acme" :improve "c1")
+               (tenant-budget-scope :improve "c1")))
+    (ok (equal '(:tenant "acme" :improve "c1")
+               (improve-budget-scope "c1")))
+    (ok (equal '(:tenant "acme" :research "r1")
+               (research-budget-scope "r1"))))
+  (ok (null (tenant-of-reference "domain/echo")))
+  (ok (equal "docs" (tenant-corpus-name "docs")))
+  (ok (equal '(:improve "c1") (improve-budget-scope "c1"))))
 
 (deftest corporate-skip-locked-sql-text
   (let ((sql (postgres-claimable-lease-sql "task_lease")))

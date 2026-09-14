@@ -109,7 +109,11 @@
   (funcall thunk))
 
 (defun research-budget-scope (run-id)
-  (list :research run-id))
+  "A2 budget-policy scope for a deep-research run.
+   When *TENANT* is bound, the scope is tenant-prefixed (C4)."
+  (if (current-tenant)
+      (tenant-budget-scope :research run-id)
+      (list :research run-id)))
 
 (defun wrap-research-llm (llm run-id &key budget)
   "Wrap LLM in an A2 budget-policy scoped to (:RESEARCH RUN-ID)."
