@@ -355,7 +355,7 @@
   "workspace:// is jailed, listed, readable, and ingested onto the board."
   (with-tmp-dir (root)
     (%write-tree-file root "src/ksar.lisp"
-                      "(defun ksar () \"Knowledge-Source Activation Record\")")
+                      "(defun ksar () \"KSAR: Knowledge-Source Activation Record\")")
     (%write-tree-file root "docs/blackboard.md"
                       "The blackboard is shared working memory for KSAR control.")
     (%write-tree-file root "secret.bin" "not-listed")
