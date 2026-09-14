@@ -473,6 +473,15 @@
     (%demo-kv spec "command" default-cmd)
     (%demo-kv spec "llm" (getf spec :llm))
     (%demo-kv spec "websearch" (getf spec :websearch))
+    (let ((sum (profile-backend-summary (expert-profile domain))))
+      (when sum
+        (%demo-kv spec "llm-model" (getf sum :model))
+        (%demo-kv spec "llm-class" (getf sum :llm-class))
+        (%demo-kv spec "llm-providers" (getf sum :providers))))
+    (when web:*websearch-backend*
+      (%demo-kv spec "websearch-class" (type-of web:*websearch-backend*))
+      (when (web:searxng-backend-p web:*websearch-backend*)
+        (%demo-kv spec "websearch-url" (web:searxng-base-url web:*websearch-backend*))))
     (%bind-mock-websearch spec)
     (when (eq (getf spec :narration) :quiet)
       (format t "demo ~a expert ~a command ~a~%"

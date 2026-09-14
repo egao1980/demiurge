@@ -180,13 +180,7 @@
       (rag:make-mock-vector-store)))
 
 (defun %llm-for (profile llm)
-  (or llm
-      (let ((cat (and (deployment-profile-p profile)
-                      (profile-llm-catalog profile)))
-            (model (and (deployment-profile-p profile)
-                        (profile-default-model profile))))
-        (when cat
-          (ignore-errors (llm:resolve-backend cat model))))
+  (or (resolve-profile-llm profile llm)
       (llm:make-mock-llm-backend)))
 
 (defun %keywordize (name)

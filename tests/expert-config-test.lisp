@@ -178,9 +178,49 @@ prefix = \"from-toml: \"
 kind = \"mock\"
 "))
            (domain (load-expert-config path))
-           (prof (expert-profile domain)))
+           (prof (expert-profile domain))
+           (llm (resolve-profile-llm prof)))
       (ok (expert-domain-p domain))
       (ok (deployment-profile-p prof))
       (ok (equal "mock" (profile-default-model prof)))
       (ok (profile-llm-catalog prof))
-      (ok (web:websearch-backend-p web:*websearch-backend*)))))
+      (ok (llm:llm-backend-p llm))
+      (ok (find "mock" (mapcar #'llm:llm-provider-name
+                               (llm:list-providers (profile-llm-catalog prof)))
+                :test #'equal))
+      (ok (web:websearch-backend-p web:*websearch-backend*))
+      (ok (not (web:searxng-backend-p web:*websearch-backend*))))))
+
+(deftest expert-config-openai-compat-and-searxng-from-toml
+  "Live kinds in expert.toml construct openai-compat + SearXNG (no env URLs)."
+  (with-clean-registry
+    (let* ((path (%write-tmp-toml "
+[expert]
+name = \"live-catalog\"
+
+[llm]
+default-model = \"lmstudio\"
+
+[[llm.catalog]]
+name = \"lmstudio\"
+kind = \"openai-compat\"
+base-url = \"http://127.0.0.1:1234/v1\"
+model = \"prism-ml/bonsai-27b\"
+api-key-env = \"LM_API_TOKEN\"
+
+[websearch]
+kind = \"searxng\"
+base-url = \"http://127.0.0.1:8888\"
+"))
+           (domain (load-expert-config path))
+           (prof (expert-profile domain))
+           (llm (bare-llm-backend (resolve-profile-llm prof)))
+           (sum (profile-backend-summary prof)))
+      (ok (deployment-profile-p prof))
+      (ok (equal "lmstudio" (profile-default-model prof)))
+      (ok (find "lmstudio" (getf sum :providers) :test #'equal))
+      (ok (eq (type-of llm) (getf sum :llm-class)))
+      (ok (not (search "MOCK" (string (type-of llm)))))
+      (ok (web:searxng-backend-p web:*websearch-backend*))
+      (ok (equal "http://127.0.0.1:8888"
+                 (web:searxng-base-url web:*websearch-backend*))))))

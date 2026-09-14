@@ -207,13 +207,8 @@
           (t (task:make-in-memory-journal))))))
 
 (defun %llm-for (domain llm)
-  (or llm
-      (let ((prof (and (expert-domain-p domain) (expert-profile domain))))
-        (when (deployment-profile-p prof)
-          (let ((cat (profile-llm-catalog prof))
-                (model (profile-default-model prof)))
-            (when cat
-              (ignore-errors (llm:resolve-backend cat model))))))
+  (or (resolve-profile-llm (and (expert-domain-p domain) (expert-profile domain))
+                          llm)
       (llm:make-mock-llm-backend)))
 
 (defvar *trial-restricted-catalogue* nil

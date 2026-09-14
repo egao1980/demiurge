@@ -107,6 +107,8 @@
    #:profile-default-model
    #:profile-skill-store
    #:profile-require-hitl-p
+   #:resolve-profile-llm
+   #:profile-backend-summary
 
    #:expert-domain
    #:expert-domain-p

@@ -574,11 +574,13 @@
         (setf web:*websearch-backend*
               (if (member kind '("searxng" "searx" "live") :test #'equal)
                   (progn
-                    (demiurge::%ensure-http-backend)
-                    (web:make-searxng-backend)
-                   :base-url (if (and url (plusp (length url)))
-                                 url
-                                 "http://127.0.0.1:8888"))
+                    (unless (demiurge::%ensure-http-backend)
+                      (error 'expert-config-error
+                             :message "[websearch] kind=searxng needs http-backend-dexador"))
+                    (web:make-searxng-backend
+                     :base-url (if (and url (plusp (length url)))
+                                   url
+                                   "http://127.0.0.1:8888")))
                   (web:make-mock-websearch-backend))))
       web:*websearch-backend*)))
 
