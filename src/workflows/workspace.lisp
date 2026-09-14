@@ -353,12 +353,19 @@ Retrieve with retrieve-research-sources (RAG) or MCP read-resource."
           (t "")))))
 
 (defun generate-research-step (llm step user-text &key output workspace instructions)
-  "system-turn (step instructions) + user-turn. → llm-response."
+  "system-turn (step instructions) + user-turn. → llm-response.
+   Structured-output failures (observe router drops IGNORE-OUTPUT) keep the
+   text response so COALESCE-RESEARCH-PLAN can still run."
   (let* ((sys (research-instruction (or workspace instructions) step))
          (turns (list (llm:system-turn sys)
                       (llm:user-turn (or user-text "")))))
     (if output
-        (llm:generate llm turns :output output)
+        (handler-case (llm:generate llm turns :output output)
+          (llm:llm-output-error (e)
+            (or (llm:llm-output-error-response e)
+                (progn
+                  (warn "~a; retrying ~a without structured output" e step)
+                  (llm:generate llm turns)))))
         (llm:generate llm turns))))
 
 (defun %domain-expert-instructions (domain)

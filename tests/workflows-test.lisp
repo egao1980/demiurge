@@ -124,6 +124,19 @@
   (let ((schema (llm:structured-output-json-schema 'research-plan)))
     (ok (hash-table-p schema))))
 
+(deftest generate-research-step-keeps-text-on-output-error
+  "Observe-wrapped backends re-signal LLM-OUTPUT-ERROR without IGNORE-OUTPUT."
+  (let* ((bare (llm:make-mock-llm-backend
+                :handler (lambda (backend turns &key &allow-other-keys)
+                           (declare (ignore backend turns))
+                           (llm:make-llm-response
+                            :parts (list (llm:make-llm-text-part :text "not-json"))))))
+         (llm (wrap-llm-observe bare :expert "t" :scope "t"))
+         (r (generate-research-step llm :plan "CL expert systems"
+                                    :output 'research-plan)))
+    (ok (llm:llm-response-p r))
+    (ok (search "not-json" (or (llm:llm-response-text r) "")))))
+
 (deftest deep-research-e2e-mock-llm-websearch
   (let* ((board (bb:make-blackboard))
          (result (%run-research :task-id "research-e2e"
