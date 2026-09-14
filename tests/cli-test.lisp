@@ -155,22 +155,6 @@ narration = \"normal\"
           (write-string "hi~%" out))
         (ok (= 0 (%run-cli (list "demo" (namestring tmp)))))))))
 
-(deftest cli-demo-improve-ingest-prefixes
-  "improve: and ingest: prefixes dispatch. ingest: is also covered by
-   cli-ingest-smoke; here we only require improve: to exit 0."
-  (with-clean-registry
-    (with-tmp-dir (tmp)
-      (let ((toml (merge-pathnames "expert.toml" tmp))
-            (queries (merge-pathnames "queries.md" tmp)))
-        (uiop:copy-file (%echo-toml) toml)
-        (with-open-file (out queries :direction :output :if-exists :supersede
-                             :if-does-not-exist :create)
-          (format out "# comment~%improve:~%"))
-        (multiple-value-bind (status)
-            (%run-cli (list "demo" (namestring tmp)))
-          (ok (= 0 status))
-          (ok (find-expert "echo")))))))
-
 (deftest cli-demo-command-improve
   (with-clean-registry
     (with-tmp-dir (tmp)
