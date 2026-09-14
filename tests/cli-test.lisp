@@ -156,17 +156,16 @@ narration = \"normal\"
         (ok (= 0 (%run-cli (list "demo" (namestring tmp)))))))))
 
 (deftest cli-demo-improve-ingest-prefixes
-  "improve: / ingest: query prefixes dispatch through cmd-demo."
+  "improve: / ingest: query prefixes dispatch through cmd-demo.
+   ingest: uses the golden echo.toml in place (corpus/ is a sibling)."
   (with-clean-registry
     (with-tmp-dir (tmp)
-      (let ((toml (merge-pathnames "expert.toml" tmp))
-            (queries (merge-pathnames "queries.md" tmp))
-            (src (asdf:system-relative-pathname "demiurge"
-                                                "tests/fixtures/corpus/")))
-        (uiop:copy-file (%echo-toml) toml)
-        (let ((dest (ensure-directories-exist (merge-pathnames "corpus/" tmp))))
-          (dolist (file (uiop:directory-files src))
-            (uiop:copy-file file (merge-pathnames (file-namestring file) dest))))
+      (let ((demo (merge-pathnames "demo.toml" tmp))
+            (queries (merge-pathnames "queries.md" tmp)))
+        (with-open-file (out demo :direction :output :if-exists :supersede
+                             :if-does-not-exist :create)
+          (format out "expert = ~s~%command = \"ask\"~%"
+                  (namestring (%echo-toml))))
         (with-open-file (out queries :direction :output :if-exists :supersede
                              :if-does-not-exist :create)
           (format out "# comment~%ingest: corpus~%improve:~%"))
