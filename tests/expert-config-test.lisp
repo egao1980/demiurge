@@ -224,3 +224,16 @@ base-url = \"http://127.0.0.1:8888\"
       (ok (web:searxng-backend-p web:*websearch-backend*))
       (ok (equal "http://127.0.0.1:8888"
                  (web:searxng-base-url web:*websearch-backend*))))))
+
+(deftest expert-config-workspace-root
+  (let* ((path (%write-tmp-toml "
+[expert]
+name = \"ws\"
+[workspace]
+root = \".\"
+"))
+         (domain (load-expert-config path))
+         (cfg (profile-config (expert-profile domain)))
+         (root (demiurge-config-workspace-root cfg)))
+    (ok (and root (plusp (length root))))
+    (ok (probe-file (uiop:ensure-directory-pathname root)))))

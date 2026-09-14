@@ -64,6 +64,7 @@
    #:demiurge-config-llm-default-model
    #:demiurge-config-llm-catalog
    #:demiurge-config-paths-data-dir
+   #:demiurge-config-workspace-root
    #:demiurge-config-improve-enabled
    #:demiurge-config-corporate-oidc-issuer
    #:demiurge-config-corporate-oidc-client-id

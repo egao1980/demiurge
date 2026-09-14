@@ -90,6 +90,7 @@
                        journal (task:make-durable-task :id id)))))
 
 (defun %run-research (&key journal task-id llm websearch budget blackboard
+                        tree-root
                         (max-rounds 1) (question "CL expert systems"))
   (run-deep-research (%research-domain)
                      question
@@ -99,7 +100,8 @@
                      :websearch (or websearch (%research-websearch))
                      :journal (or journal (task:make-in-memory-journal))
                      :task-id (or task-id "research-e2e")
-                     :blackboard blackboard))
+                     :blackboard blackboard
+                     :tree-root tree-root))
 
 (deftest make-research-plan-accepts-jzon-vector
   "jzon decodes JSON arrays as vectors; plan construction must not MAPCAR them."
@@ -331,3 +333,70 @@
     (ok (search "Common Lisp" (research-instruction ws :expert)))
     (ok (search "Common Lisp"
                 (getf (bb:read-section board :research-instructions) :expert)))))
+
+(defun %write-tree-file (root rel text)
+  (let ((path (merge-pathnames rel (uiop:ensure-directory-pathname root))))
+    (ensure-directories-exist path)
+    (with-open-file (out path :direction :output :if-exists :supersede)
+      (write-string text out))
+    path))
+
+(deftest research-tree-jail-rejects-dotdot
+  "pathlib:under + relative-to-p: lexical .. and absolute paths stay outside."
+  (with-tmp-dir (root)
+    (%write-tree-file root "ok.md" "inside")
+    (ok (search "inside" (read-research-tree-file root "ok.md")))
+    (ok (signals (read-research-tree-file root "../ok.md") 'research-error))
+    (ok (signals (read-research-tree-file root "/etc/passwd") 'research-error))
+    (ok (signals (read-research-tree-file root "foo/../../etc/passwd")
+                 'research-error))))
+
+(deftest research-workspace-mcp-over-tree
+  "workspace:// is jailed, listed, readable, and ingested onto the board."
+  (with-tmp-dir (root)
+    (%write-tree-file root "src/ksar.lisp"
+                      "(defun ksar () \"Knowledge-Source Activation Record\")")
+    (%write-tree-file root "docs/blackboard.md"
+                      "The blackboard is shared working memory for KSAR control.")
+    (%write-tree-file root "secret.bin" "not-listed")
+    (let* ((ws (make-research-workspace :name "tree-mcp" :tree-root root))
+           (files (list-research-tree-files root)))
+      (ok (research-workspace-tree-root ws))
+      (ok (find "src/ksar.lisp" files :test #'equal))
+      (ok (find "docs/blackboard.md" files :test #'equal))
+      (ng (find "secret.bin" files :test #'equal))
+      (ok (signals (read-research-resource ws "workspace://../etc/passwd")
+                   'research-error))
+      (ok (search "KSAR" (read-research-tree-file root "src/ksar.lisp")))
+      (let* ((listed (list-research-resources ws))
+             (uris (mapcar (lambda (r)
+                             (or (ignore-errors (mcp:mcp-resource-uri r))
+                                 (and (consp r) (getf r :uri))))
+                           listed)))
+        (ok (find "workspace://" uris :test #'equal))
+        (ok (find (workspace-resource-uri "src/ksar.lisp") uris :test #'equal)))
+      (ok (search "KSAR"
+                  (%mcp-resource-text-for-test
+                   (read-research-resource ws "workspace://src/ksar.lisp"))))
+      (let ((hits (ingest-workspace-hits ws "KSAR blackboard" :top-k 2)))
+        (ok (plusp (length hits)))
+        (ok (every (lambda (s) (eq (getf s :kind) :workspace)) hits))
+        (ok (every (lambda (s) (workspace-resource-uri-p (getf s :uri))) hits)))
+      (let ((board (research-workspace-board ws)))
+        (ok (find :workspace
+                  (bb:read-section board :sources :default nil)
+                  :key (lambda (s) (getf s :kind))))))))
+
+(deftest deep-research-ingests-workspace-tree
+  (with-tmp-dir (root)
+    (%write-tree-file root "improve.md"
+                      "The improve cycle uses no-critical-regression-gate.")
+    (let* ((board (bb:make-blackboard))
+           (result (%run-research :task-id "research-tree"
+                                  :blackboard board
+                                  :tree-root root
+                                  :question "no-critical-regression-gate"))
+           (sources (bb:read-section board :sources :default nil)))
+      (ok (research-workspace-tree-root (getf result :workspace)))
+      (ok (find :workspace sources :key (lambda (s) (getf s :kind)))
+          "child ingest recorded a workspace:// source"))))

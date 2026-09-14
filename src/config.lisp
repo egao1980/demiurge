@@ -58,6 +58,10 @@ base-dn = \"\"
     :initarg :paths-data-dir
     :accessor demiurge-config-paths-data-dir
     :initform nil)
+   (workspace-root
+    :initarg :workspace-root
+    :accessor demiurge-config-workspace-root
+    :initform nil)
    (improve-enabled
     :initarg :improve-enabled
     :accessor demiurge-config-improve-enabled
@@ -237,6 +241,7 @@ base-dn = \"\"
                  :llm-default-model (%cfg-string stack "llm.default-model" "mock")
                  :llm-catalog (%cfg-catalog stack)
                  :paths-data-dir (%cfg-string stack "paths.data-dir" nil)
+                 :workspace-root (%cfg-string stack "workspace.root" nil)
                  :improve-enabled (%cfg-bool stack "improve.enabled" nil)
                  :corporate-oidc-issuer (%cfg-string stack "corporate.oidc.issuer" nil)
                  :corporate-oidc-client-id (%cfg-string stack "corporate.oidc.client-id" nil)

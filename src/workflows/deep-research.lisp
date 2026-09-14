@@ -236,12 +236,17 @@
                  (make-research-workspace :name id :domain domain)))
          (clip (research-workspace-clip-chars ws))
          (corpus-hits (%retrieve-corpus domain question :llm llm :top-k top-k))
+         (workspace-hits (ignore-errors
+                           (ingest-workspace-hits ws question
+                                                  :top-k top-k
+                                                  :subquestion id)))
          (hits (ignore-errors (web:search-web websearch question :count 5)))
          (web-hits (mapcar #'%hit-plist (or hits nil)))
-         (recorded (%ingest-web-hits ws web-hits
-                                     :websearch websearch
-                                     :browser browser
-                                     :subquestion id))
+         (recorded (append (or workspace-hits '())
+                           (%ingest-web-hits ws web-hits
+                                             :websearch websearch
+                                             :browser browser
+                                             :subquestion id)))
          (retrieved (retrieve-research-sources ws question :top-k top-k))
          (user (%child-user-prompt question retrieved :clip-chars clip))
          (response (generate-research-step llm :child user :workspace ws))
@@ -467,11 +472,12 @@
                                         llm websearch browser
                                         journal task-id blackboard
                                         workspace store instructions
+                                        tree-root
                                         (top-k 5))
   "Plan → spawn-child-task per sub-question → join :all → gap rounds →
    C3d extracted-document → A1 eval gate → C3e markdown (PDF if loaded).
-   Fetched pages land on a blackboard research workspace (RAG + MCP resources).
-   Whole run is under an A2 budget scope."
+   Fetched pages and workspace:// files land on a blackboard research
+   workspace (RAG + MCP resources). Whole run is under an A2 budget scope."
   (check-type domain expert-domain)
   (check-type question string)
   (let* ((max-rounds (or max-rounds 2))
@@ -489,7 +495,8 @@
                          :board cow
                          :store store
                          :instructions instructions
-                         :domain domain)))
+                         :domain domain
+                         :tree-root tree-root)))
          (board (research-workspace-board workspace))
          (wf (make-project-workflow :name run-id :domain domain
                                     :board board :task task))

@@ -11,7 +11,8 @@
                     (#:schema #:schema-protocol)
                     (#:log #:log-protocol)
                     (#:mcp #:mcp-protocol)
-                    (#:agent #:ai-agent-protocol))
+                    (#:agent #:ai-agent-protocol)
+                    (#:pathlib #:cl-stack-pathlib)))
   (:export
    #:workflows-error
    #:approval-required
@@ -87,6 +88,7 @@
    #:research-workspace-sources
    #:research-workspace-mcp
    #:research-workspace-instructions
+   #:research-workspace-tree-root
    #:record-research-source
    #:retrieve-research-sources
    #:research-source-catalog
@@ -97,6 +99,15 @@
    #:ensure-research-mcp-server
    #:list-research-resources
    #:read-research-resource
+   #:research-mcp-server
+   #:research-mcp-server-p
+   #:workspace-resource-uri
+   #:workspace-resource-uri-p
+   #:resolve-research-tree-root
+   #:list-research-tree-files
+   #:read-research-tree-file
+   #:search-research-tree
+   #:ingest-workspace-hits
 
    #:report-workflow-progress
    #:sync-workflow-wire

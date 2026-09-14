@@ -36,7 +36,7 @@ Lead with the answer, then per-subquestion findings, then open questions. Keep i
 
     :expert
     "You are a cl-stack / Common Lisp expert attached to this research run.
-Prefer workspace sources (research://source/<id>) over prior knowledge.
+Prefer workspace sources (research://source/<id> and workspace://<relpath>) over prior knowledge.
 Use lookup-symbol / search-corpus when those tools exist. Cite src-ids. Do not guess.")
   "Initial system prompts for each deep-research step and the attached expert.")
 
@@ -59,6 +59,8 @@ Use lookup-symbol / search-corpus when those tools exist. Cite src-ids. Do not g
                  :initform nil)
    (clip-chars :initarg :clip-chars :accessor research-workspace-clip-chars
                :initform *default-research-clip-chars*)
+   (tree-root :initarg :tree-root :accessor research-workspace-tree-root
+              :initform nil)
    (source-counter :initform 0 :accessor research-workspace-source-counter)))
 
 (defun research-workspace-p (x)
@@ -129,7 +131,9 @@ Use lookup-symbol / search-corpus when those tools exist. Cite src-ids. Do not g
                         (list :name (research-workspace-name ws)
                               :source-count (length (research-workspace-sources ws))
                               :store (and (research-workspace-store ws) t)
-                              :mcp (and (research-workspace-mcp ws) t)))
+                              :mcp (and (research-workspace-mcp ws) t)
+                              :tree-root (let ((root (research-workspace-tree-root ws)))
+                                           (and root (namestring root)))))
       (bb:write-section board :research-instructions
                         (copy-list (research-workspace-instructions ws)))))
   ws)
@@ -237,16 +241,25 @@ Use lookup-symbol / search-corpus when those tools exist. Cite src-ids. Do not g
                  (declare (ignore res))
                  (or (getf rec :text) ""))))))
 
+(defclass research-mcp-server (mcp:mcp-server)
+  ((workspace :initarg :workspace :accessor research-mcp-server-workspace
+              :initform nil)))
+
+(defun research-mcp-server-p (x)
+  (typep x 'research-mcp-server))
+
 (defun ensure-research-mcp-server (ws &key (force nil))
-  "In-process MCP server exposing instructions + catalog + each source."
+  "In-process MCP server exposing instructions + catalog + sources + workspace://."
   (when (or force (null (research-workspace-mcp ws)))
     (when (%ensure-mcp-loaded)
-      (let ((server (make-instance 'mcp:mcp-server
+      (let ((server (make-instance 'research-mcp-server
                                    :name (or (research-workspace-name ws) "research")
                                    :version "0.3.6"
+                                   :workspace ws
                                    :instructions (mcp-server-instructions-for ws))))
         (%register-instruction-resources ws server)
         (%register-catalog-resource ws server)
+        (%register-workspace-resources ws server)
         (dolist (rec (research-workspace-sources ws))
           (%register-source-resource ws server rec))
         (setf (research-workspace-mcp ws) server))))
@@ -256,6 +269,7 @@ Use lookup-symbol / search-corpus when those tools exist. Cite src-ids. Do not g
   (format nil "Demiurge research workspace ~a.
 Step system prompts: research://instructions/{plan,child,gap,synthesize,expert}.
 Fetched pages: research://source/<id>. Catalog: research://catalog.
+Local checkout: workspace:// and workspace://<relpath>.
 Retrieve with retrieve-research-sources (RAG) or MCP read-resource."
           (research-workspace-name ws)))
 
@@ -329,7 +343,13 @@ Retrieve with retrieve-research-sources (RAG) or MCP read-resource."
                                            (string-downcase (string step)))))
          (loop for rec in (research-workspace-sources ws)
                collect (list :uri (getf rec :resource-uri)
-                             :name (getf rec :id)))))))
+                             :name (getf rec :id)))
+         (when (research-tree-root ws)
+           (list* (list :uri "workspace://" :name "workspace")
+                  (loop for rel in (list-research-tree-files
+                                    (research-tree-root ws))
+                        collect (list :uri (workspace-resource-uri rel)
+                                      :name rel))))))))
 
 (defun read-research-resource (ws uri)
   "MCP read-resource when a server is bound; otherwise board/source text."
@@ -350,6 +370,14 @@ Retrieve with retrieve-research-sources (RAG) or MCP read-resource."
                   (rec (find id (research-workspace-sources ws)
                              :key (lambda (s) (getf s :id)) :test #'equal)))
              (or (getf rec :text) "")))
+          ((workspace-resource-uri-p uri)
+           (let ((rel (workspace-uri-relpath uri))
+                 (root (research-tree-root ws)))
+             (cond
+               ((or (null rel) (zerop (length rel)))
+                (workspace-catalog-text ws))
+               (root (read-research-tree-file root rel))
+               (t ""))))
           (t "")))))
 
 (defparameter *research-output-attempts* 3
@@ -399,22 +427,8 @@ Retrieve with retrieve-research-sources (RAG) or MCP read-resource."
                  (when (and text (plusp (length text)))
                    (return text))))))
 
-(defun make-research-workspace (&key name board store instructions domain
-                                  clip-chars mcp)
-  (let* ((board (or board (bb:make-blackboard)))
-         (store (or store (rag:make-mock-vector-store :dimension *research-embed-dim*)))
-         (merged (merge-research-instructions instructions))
-         (expert (%domain-expert-instructions domain)))
-    (when expert
-      (setf (getf merged :expert) expert))
-    (let ((ws (make-instance 'research-workspace
-                             :name (or name "research")
-                             :board board
-                             :store store
-                             :instructions merged
-                             :clip-chars (or clip-chars *default-research-clip-chars*)
-                             :mcp mcp)))
-      (unless mcp
-        (ensure-research-mcp-server ws))
-      (%flush-sources-to-board ws)
-      ws)))
+(defun %finish-research-workspace (ws &key mcp)
+  (unless mcp
+    (ensure-research-mcp-server ws))
+  (%flush-sources-to-board ws)
+  ws)

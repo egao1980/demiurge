@@ -258,6 +258,13 @@
   (:key-style :kebab)
   (:extra :forbid))
 
+(schema:defschema expert-config-workspace ()
+  "Local checkout exposed as workspace:// MCP resources."
+  (root string :optional t :default ""
+        :accessor expert-config-workspace-root)
+  (:key-style :kebab)
+  (:extra :forbid))
+
 (schema:defschema expert-config ()
   "Declarative expert.toml document. Extra keys are forbidden."
   (expert expert-config-expert :accessor expert-config-expert)
@@ -266,6 +273,8 @@
   (llm expert-config-llm :optional t :default nil :accessor expert-config-llm)
   (websearch expert-config-websearch :optional t :default nil
              :accessor expert-config-websearch)
+  (workspace expert-config-workspace :optional t :default nil
+             :accessor expert-config-workspace)
   (corpus (list expert-config-corpus) :optional t :default nil
           :accessor expert-config-corpus)
   (skill (list expert-config-skill) :optional t :default nil
@@ -588,7 +597,8 @@
   (let ((kind (%profile-kind config))
         (p (expert-config-profile config)))
     (if (or hitl (%profile-has-overrides-p p) (eq kind :corporate)
-            (%llm-catalog-entries config))
+            (%llm-catalog-entries config)
+            (expert-config-workspace config))
         (let ((cfg (make-instance 'demiurge-config)))
           (%apply-llm-section cfg config)
           (when p
@@ -785,6 +795,14 @@
                         (list :kind (%profile-kind config)))
      :annotations (or (expert-config-expert-description ex) ""))))
 
+(defun %workspace-root-from-config (config base)
+  (let* ((ws (%maybe config #'expert-config-workspace))
+         (raw (and ws (expert-config-workspace-root ws))))
+    (when (and raw (plusp (length raw)))
+      (pathlib:as-posix
+       (pathlib:absolute
+        (pathlib:under (pathlib:ensure-directory base) raw))))))
+
 (defun load-expert-config (path &key profile llm (register nil) base-dir)
   "Load expert.toml at PATH → the same EXPERT-DOMAIN DEFEXPERT builds.
    Unknown keys signal UNKNOWN-EXPERT-CONFIG-KEY; CONTINUE ignores them
@@ -806,6 +824,7 @@
          (improve (%maybe config #'expert-config-improve))
          (hitl (and improve (%maybe improve #'expert-config-improve-hitl)))
          (profile (or profile (%config-profile config :hitl hitl)))
+         (workspace-root (%workspace-root-from-config config base))
          (llm (or llm (%llm-for profile nil) (llm:make-mock-llm-backend)))
          (skills (%skills-from-config config base))
          (steering (and skills (steer:coerce-steering skills)))
@@ -819,6 +838,10 @@
                   :eval-suites (%eval-suites-from-config config base)
                   :corpora (%corpus-refs-from-config config base))))
     (%bind-websearch-from-config config)
+    (when (and workspace-root (deployment-profile-p profile)
+               (profile-config profile))
+      (setf (demiurge-config-workspace-root (profile-config profile))
+            workspace-root))
     (when register
       (register-expert domain))
     domain))

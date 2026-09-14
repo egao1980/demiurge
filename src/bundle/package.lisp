@@ -13,7 +13,8 @@
                     (#:schema #:schema-protocol)
                     (#:toml #:toml-protocol)
                     (#:doc #:doc-extract-protocol)
-                    (#:ingest #:demiurge/ingest))
+                    (#:ingest #:demiurge/ingest)
+                    (#:pathlib #:cl-stack-pathlib))
   (:export
    #:bundle-error
    #:bundle-verification-error

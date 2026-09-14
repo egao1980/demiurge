@@ -150,13 +150,15 @@
                "llm-protocol/schema"
                "llm-protocol/router"
                "task-protocol"
-               "mcp-protocol")
+               "mcp-protocol"
+               "cl-stack-pathlib")
   :serial t
   :pathname "src/workflows"
   :components ((:file "package")
                (:file "reporting")
                (:file "project")
                (:file "workspace")
+               (:file "tree")
                (:file "deep-research")))
 
 (defsystem "demiurge/bundle"
@@ -166,6 +168,7 @@
   :license "MIT"
   :depends-on ("demiurge"
                "demiurge/ingest"
+               "cl-stack-pathlib"
                "schema-protocol"
                "toml-protocol"
                "steer-protocol"
