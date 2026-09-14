@@ -262,6 +262,8 @@
   "Local checkout exposed as workspace:// MCP resources."
   (root string :optional t :default ""
         :accessor expert-config-workspace-root)
+  (seed string :optional t :default ""
+        :accessor expert-config-workspace-seed)
   (:key-style :kebab)
   (:extra :forbid))
 
@@ -838,10 +840,15 @@
                   :eval-suites (%eval-suites-from-config config base)
                   :corpora (%corpus-refs-from-config config base))))
     (%bind-websearch-from-config config)
-    (when (and workspace-root (deployment-profile-p profile)
-               (profile-config profile))
-      (setf (demiurge-config-workspace-root (profile-config profile))
-            workspace-root))
+    (when (and (deployment-profile-p profile) (profile-config profile))
+      (when workspace-root
+        (setf (demiurge-config-workspace-root (profile-config profile))
+              workspace-root))
+      (let* ((ws (%maybe config #'expert-config-workspace))
+             (seed (and ws (expert-config-workspace-seed ws))))
+        (when (and seed (plusp (length seed)))
+          (setf (demiurge-config-workspace-seed (profile-config profile))
+                seed))))
     (when register
       (register-expert domain))
     domain))

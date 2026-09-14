@@ -238,9 +238,11 @@ base-url = \"http://127.0.0.1:8888\"
 name = \"ws\"
 [workspace]
 root = \".\"
+seed = \"KSAR blackboard\"
 "))
          (domain (load-expert-config path))
          (cfg (profile-config (expert-profile domain)))
          (root (demiurge-config-workspace-root cfg)))
     (ok (and root (plusp (length root))))
-    (ok (probe-file (uiop:ensure-directory-pathname root)))))
+    (ok (probe-file (uiop:ensure-directory-pathname root)))
+    (ok (equal "KSAR blackboard" (demiurge-config-workspace-seed cfg)))))

@@ -324,6 +324,12 @@
            "")))
     (t (princ-to-string contents))))
 
+(deftest research-instructions-seed-local-workspace
+  (ok (search "workspace://" (research-instruction nil :plan)))
+  (ok (search "workspace://" (research-instruction nil :child)))
+  (ok (search "workspace://" (research-instruction nil :gap)))
+  (ok (search "workspace://" (research-instruction nil :expert))))
+
 (deftest deep-research-instruction-override
   (let* ((custom "You are a test planning KS override. Decompose this question.")
          (ws (make-research-workspace
@@ -414,3 +420,14 @@
       (ok (research-workspace-tree-root (getf result :workspace)))
       (ok (find :workspace sources :key (lambda (s) (getf s :kind)))
           "child ingest recorded a workspace:// source"))))
+
+(deftest seed-research-workspace-ingests-seed-terms
+  (with-tmp-dir (root)
+    (%write-tree-file root "src/ksar.lisp"
+                      "(defun ksar () \"KSAR: Knowledge-Source Activation Record\")")
+    (let* ((ws (make-research-workspace :name "seed" :tree-root root))
+           (hits (seed-research-workspace ws :seed "KSAR blackboard"
+                                          :query "no-critical-regression-gate")))
+      (ok (plusp (length hits)))
+      (ok (find :workspace (research-workspace-sources ws)
+                :key (lambda (s) (getf s :kind)))))))

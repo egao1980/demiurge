@@ -513,6 +513,9 @@
          (children '()))
     (when bb-ws
       (setf (research-workspace-bb workspace) bb-ws))
+    (seed-research-workspace workspace
+                             :query question
+                             :seed (workspace-seed-from-domain domain))
     (labels ((finish (plist)
                (%merge-research-workspace workspace)
                (ignore-errors (task:complete-task task plist))

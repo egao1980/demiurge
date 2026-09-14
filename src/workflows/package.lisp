@@ -110,6 +110,8 @@
    #:read-research-tree-file
    #:search-research-tree
    #:ingest-workspace-hits
+   #:seed-research-workspace
+   #:workspace-seed-from-domain
 
    #:report-workflow-progress
    #:sync-workflow-wire

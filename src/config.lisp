@@ -62,6 +62,10 @@ base-dn = \"\"
     :initarg :workspace-root
     :accessor demiurge-config-workspace-root
     :initform nil)
+   (workspace-seed
+    :initarg :workspace-seed
+    :accessor demiurge-config-workspace-seed
+    :initform nil)
    (improve-enabled
     :initarg :improve-enabled
     :accessor demiurge-config-improve-enabled
@@ -242,6 +246,7 @@ base-dn = \"\"
                  :llm-catalog (%cfg-catalog stack)
                  :paths-data-dir (%cfg-string stack "paths.data-dir" nil)
                  :workspace-root (%cfg-string stack "workspace.root" nil)
+                 :workspace-seed (%cfg-string stack "workspace.seed" nil)
                  :improve-enabled (%cfg-bool stack "improve.enabled" nil)
                  :corporate-oidc-issuer (%cfg-string stack "corporate.oidc.issuer" nil)
                  :corporate-oidc-client-id (%cfg-string stack "corporate.oidc.client-id" nil)

@@ -220,6 +220,30 @@
       (dolist (rel (list-research-tree-files root))
         (format s "~a~%" (workspace-resource-uri rel))))))
 
+(defun workspace-seed-from-domain (domain)
+  (let* ((profile (and (expert-domain-p domain) (expert-profile domain)))
+         (cfg (and (deployment-profile-p profile) (profile-config profile)))
+         (raw (and cfg (demiurge-config-workspace-seed cfg))))
+    (and raw (plusp (length (string raw))) (string raw))))
+
+(defun seed-research-workspace (ws &key query seed (top-k 6))
+  "Ingest checkout hits for SEED then QUERY so children see workspace:// sources."
+  (unless (research-tree-root ws)
+    (return-from seed-research-workspace nil))
+  (let ((terms (remove-if (lambda (s) (or (null s) (zerop (length (string s)))))
+                          (list seed query)))
+        (out '()))
+    (dolist (term terms)
+      (research-trace "workspace seed ~s" term)
+      (setf out (append out
+                        (or (ignore-errors
+                              (ingest-workspace-hits ws term
+                                                     :top-k top-k
+                                                     :subquestion "seed"))
+                            '()))))
+    (research-trace "workspace seed hits=~d" (length out))
+    out))
+
 (defun ingest-workspace-hits (ws query &key (top-k 4) subquestion)
   "Search the tree and record-research-source each hit as :workspace."
   (let ((root (research-tree-root ws)))
