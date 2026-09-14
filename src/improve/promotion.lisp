@@ -15,31 +15,24 @@
        :body text))))
 
 (defun emit-promotion-metric (&key cycle-id eval-run-id verdict)
-  (let* ((pkg (find-package '#:demiurge/observe))
-         (name (cond
-                 ((and pkg (eq verdict :demote)
-                       (find-symbol "+METRIC-IMPROVE-DEMOTIONS+" pkg)
-                       (boundp (find-symbol "+METRIC-IMPROVE-DEMOTIONS+" pkg)))
-                  (symbol-value (find-symbol "+METRIC-IMPROVE-DEMOTIONS+" pkg)))
-                 ((and pkg (find-symbol "+METRIC-IMPROVE-PROMOTIONS+" pkg)
-                       (boundp (find-symbol "+METRIC-IMPROVE-PROMOTIONS+" pkg)))
-                  (symbol-value (find-symbol "+METRIC-IMPROVE-PROMOTIONS+" pkg)))
-                 ((eq verdict :demote) "demiurge.improve.demotions")
-                 (t "demiurge.improve.promotions"))))
-    (ignore-errors
-      (tel:record-metric tel:*telemetry-backend*
-                         name
-                         1
-                         :attributes (list :cycle-id cycle-id
-                                           :eval-run-id eval-run-id
-                                           :verdict verdict)
-                         :unit "1")))
+  (let ((name (if (eq verdict :demote)
+                  "RECORD-DEMOTION"
+                  "RECORD-PROMOTION")))
+    (demiurge::%observe-record name
+                               :cycle-id cycle-id
+                               :eval-run-id eval-run-id))
   t)
 
 (defun record-improve-decision (blackboard provenance)
-  "Write the decision record to a board section. PROVENANCE is a plist."
+  "Write the decision record to a board section. PROVENANCE is a plist.
+   Emits record-promotion / record-demotion from the verdict."
   (when blackboard
     (bb:write-section blackboard :improve-decision (copy-list provenance)))
+  (let ((verdict (getf provenance :verdict)))
+    (when (member verdict '(:promote :demote) :test #'eq)
+      (emit-promotion-metric :cycle-id (getf provenance :cycle-id)
+                             :eval-run-id (getf provenance :eval-run-id)
+                             :verdict verdict)))
   provenance)
 
 (defun save-promoted-skill (domain revision &key cycle-id eval-run-id
@@ -60,12 +53,8 @@
     (when (and store skill)
       (setf saved (steer:save-skill-version store skill :provenance prov)))
     (record-improve-decision blackboard prov)
-    (when (eq verdict :promote)
-      (emit-promotion-metric :cycle-id cycle-id
-                             :eval-run-id eval-run-id
-                             :verdict verdict)
-      (when log:*log-backend*
-        (log:with-context (:eval-run-id eval-run-id
-                           :cycle-id cycle-id)
-          (log:info "improvement promotion"))))
+    (when (and (eq verdict :promote) log:*log-backend*)
+      (log:with-context (:eval-run-id eval-run-id
+                         :cycle-id cycle-id)
+        (log:info "improvement promotion")))
     saved))

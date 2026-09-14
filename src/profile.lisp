@@ -84,11 +84,16 @@
       (multiple-value-bind (name backend)
           (%make-catalog-backend entry)
         (when (and name backend)
-          (llm:register-provider cat name backend
-                                 :models (let ((m (getf entry :model)))
-                                           (and m (list m)))))))
+          (llm:register-provider
+           cat name
+           (wrap-llm-observe backend :expert name :scope "profile")
+           :models (let ((m (getf entry :model)))
+                     (and m (list m)))))))
     (when (zerop (length (llm:list-providers cat)))
-      (llm:register-provider cat "mock" (llm:make-mock-llm-backend)))
+      (llm:register-provider
+       cat "mock"
+       (wrap-llm-observe (llm:make-mock-llm-backend)
+                         :expert "mock" :scope "profile")))
     cat))
 
 (defun %open-session-store (path)

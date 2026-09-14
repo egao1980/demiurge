@@ -9,6 +9,8 @@
 (defun record-ks-eval (ks-id mean &optional (history *ks-eval-history*))
   (let ((key (string-downcase (string ks-id))))
     (push mean (gethash key history))
+    (when mean
+      (demiurge::%observe-record "RECORD-EVAL-SCORE" ks-id mean))
     (gethash key history)))
 
 (defun %rolling-mean (scores window)
@@ -244,6 +246,13 @@
                                         (lambda (in) (%respond candidate in))))))
                  (multiple-value-bind (b c)
                      (call-with-wall-clock wall-clock #'once)
+                   (let ((ks-tag (string (bb:ks-name current))))
+                     (when b
+                       (demiurge::%observe-record "RECORD-EVAL-SCORE" ks-tag
+                                                  (eval:eval-run-mean b)))
+                     (when c
+                       (demiurge::%observe-record "RECORD-EVAL-SCORE" ks-tag
+                                                  (eval:eval-run-mean c))))
                    (setf baseline b cand-run c))))
           (ignore-errors (bb:discard-workspace ws)))))
     (values baseline cand-run)))

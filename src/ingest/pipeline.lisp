@@ -142,6 +142,7 @@
 (defun ingest-one-item (item &key store embedder object-store)
   (when *ingest-item-hook*
     (funcall *ingest-item-hook* (item-plist item)))
+  (%ensure-item-content item)
   (let* ((hash (ingest-item-hash item))
          (doc (handler-case (%extract item) (error () nil)))
          (chunks (handler-case
@@ -160,7 +161,8 @@
           :chunk-ids (mapcar #'rag:rag-chunk-id chunks))))
 
 (defun sweep-deleted-items (store live-hashes)
-  "Mark-and-sweep: drop chunks whose content-hash is not in LIVE-HASHES."
+  "Mark-and-sweep: drop chunks whose content-hash is not in LIVE-HASHES.
+   Returns the deleted chunk ids. STALE count = stored-hashes − enumerated."
   (let* ((live (make-hash-table :test 'equal))
          (stale '()))
     (dolist (h live-hashes)
@@ -177,6 +179,18 @@
                           (when r (invoke-restart r))))))
         (rag:delete-ids store (nreverse stale))))
     stale))
+
+(defun %sweep-completed-report (stored-hashes live-hashes stale-ids)
+  "Counts for the journaled sweep-completed event.
+   STALE = stored-hashes − enumerated-hashes (set difference, before delete)."
+  (let* ((stored (copy-list stored-hashes))
+         (enumerated (remove nil live-hashes))
+         (stale-hashes (set-difference stored enumerated :test #'equal)))
+    (list :event :sweep-completed
+          :stale (length stale-hashes)
+          :stored (length stored)
+          :enumerated (length enumerated)
+          :stale-ids (copy-list stale-ids))))
 
 (defun %as-string-list (value)
   "Coerce a journaled enumerate result to hash strings.
@@ -243,6 +257,10 @@
                                 :store store
                                 :embedder embedder
                                 :object-store object-store)))
+                      (demiurge::%observe-record
+                       "RECORD-INGEST-DOCUMENT"
+                       :count 1
+                       :expert (expert-name domain))
                       (dolist (id (getf got :chunk-ids))
                         (push (if (stringp id)
                                   id
@@ -253,11 +271,15 @@
                   (when (%killed-mid-corpus-p c)
                     (error c))
                   nil)))))
-        (let ((swept (task:with-durable-step
-                         ("sweep" :idempotency-key "ingest/sweep")
-                       (sweep-deleted-items store hashes))))
+        (let ((sweep-report
+               (task:with-durable-step
+                   ("sweep" :idempotency-key "ingest/sweep")
+                 (let* ((stored-before (stored-content-hashes store))
+                        (swept (sweep-deleted-items store hashes)))
+                   (%sweep-completed-report stored-before hashes swept)))))
           (setf result (list :hashes hashes
                              :chunk-ids chunk-ids
-                             :swept swept))
+                             :swept (getf sweep-report :stale-ids)
+                             :sweep sweep-report))
           (task:complete-task task result))))
     result))

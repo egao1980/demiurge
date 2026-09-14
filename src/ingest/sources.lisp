@@ -96,15 +96,53 @@
 (defun make-file-source (&key root (pattern "*") (recursive t))
   (make-instance 'file-source :root root :pattern pattern :recursive recursive))
 
+(defun %name-matches-pattern-p (namestring pattern)
+  (cond
+    ((or (null pattern) (string= pattern "*")) t)
+    ((and (plusp (length pattern)) (char= (char pattern 0) #\*))
+     (let ((suffix (subseq pattern 1)))
+       (and (>= (length namestring) (length suffix))
+            (string= namestring suffix
+                     :start1 (- (length namestring) (length suffix))))))
+    (t (string= namestring pattern))))
+
+(defun %uiop-fallback-files (root pattern recursive)
+  "UIOP walk when pathlib:glob returns nothing (macOS DIRECTORY + **/ is flaky)."
+  (let ((base (uiop:ensure-directory-pathname root))
+        (out '()))
+    (labels ((walk (dir)
+               (dolist (f (ignore-errors (uiop:directory-files dir)))
+                 (when (%name-matches-pattern-p (file-namestring f) pattern)
+                   (push f out)))
+               (when recursive
+                 (dolist (sub (ignore-errors (uiop:subdirectories dir)))
+                   (walk sub)))))
+      (walk base)
+      (nreverse out))))
+
 (defmethod enumerate-items ((source file-source))
   (let* ((root (file-source-root source))
-         (paths (pathlib:glob root (file-source-pattern source)
-                              :recursive (file-source-recursive source))))
+         (pattern (file-source-pattern source))
+         (recursive (file-source-recursive source))
+         (paths (or (pathlib:glob root pattern :recursive recursive)
+                    (%uiop-fallback-files root pattern recursive))))
     (loop for p in paths
-          when (pathlib:file-p p)
+          when (if (pathnamep p)
+                   (uiop:file-exists-p p)
+                   (pathlib:file-p p))
             collect (let* ((ns (%path-string p))
-                           (text (pathlib:read-text p))
-                           (bytes (pathlib:read-bytes p)))
+                           (text (if (pathnamep p)
+                                     (uiop:read-file-string p)
+                                     (pathlib:read-text p)))
+                           (bytes (if (pathnamep p)
+                                      (with-open-file (in p :element-type
+                                                          '(unsigned-byte 8))
+                                        (let ((buf (make-array (file-length in)
+                                                               :element-type
+                                                               '(unsigned-byte 8))))
+                                          (read-sequence buf in)
+                                          buf))
+                                      (pathlib:read-bytes p))))
                       (make-ingest-item
                        :id ns
                        :uri ns
@@ -152,6 +190,113 @@
     ((stringp msg) msg)
     (t (princ-to-string msg))))
 
+(defun %parse-fetch-uid (raw)
+  (let ((pos (and raw (search "UID " raw :test #'char-equal))))
+    (when pos
+      (parse-integer raw :start (+ pos 4) :junk-allowed t))))
+
+(defun %message-entity (msg)
+  (cond
+    ((mail:message-p msg) (mail:message-entity msg))
+    ((mime:mime-entity-p msg) msg)
+    ((or (stringp msg) (vectorp msg))
+     (handler-case (mime:parse-mime msg) (error () nil)))
+    (t nil)))
+
+(defun %entity-text (entity)
+  (let ((content (and entity (mime:mime-content entity))))
+    (cond
+      ((stringp content) content)
+      ((and (vectorp content) (not (stringp content)))
+       (handler-case (%object-text content) (error () "")))
+      (t ""))))
+
+(defun %attachment-p (entity)
+  (let ((cd (and entity (mime:mime-content-disposition entity))))
+    (or (and cd (string-equal (mime:content-disposition-type cd) "attachment"))
+        (and cd (mime:disposition-filename cd)))))
+
+(defun %part-format (entity)
+  (let* ((cd (mime:mime-content-disposition entity))
+         (filename (and cd (mime:disposition-filename cd)))
+         (ct (mime:mime-content-type entity)))
+    (or (and filename (%infer-format filename))
+        (and ct (ignore-errors
+                  (doc:canonicalize-format
+                   (format nil "~a/~a"
+                           (mime:media-type-type ct)
+                           (mime:media-type-subtype ct)))))
+        :txt)))
+
+(defun %extract-attachment-text (entity)
+  (let* ((fmt (%part-format entity))
+         (source (or (mime:mime-content entity) #()))
+         (backend (or (ignore-errors (doc:find-extractor fmt))
+                      (make-instance 'plain-text-extractor))))
+    (handler-case
+        (let ((doc (doc:extract-document backend source :format fmt)))
+          (or (and doc (doc:document-text doc))
+              (%entity-text entity)))
+      (error () (%entity-text entity)))))
+
+(defun %collect-mime-text (entity)
+  "Walk MIME parts: text bodies concatenated; attachments via extractors."
+  (let ((parts '()))
+    (labels ((walk (e)
+               (cond
+                 ((null e) nil)
+                 ((mime:multipart-p e)
+                  (dolist (p (mime:mime-parts e)) (walk p)))
+                 ((%attachment-p e)
+                  (let ((text (or (%extract-attachment-text e) "")))
+                    (when (plusp (length text))
+                      (push text parts))))
+                 (t
+                  (let ((text (%entity-text e)))
+                    (when (plusp (length text))
+                      (push text parts)))))))
+      (walk entity)
+      (format nil "~{~a~^~%~}" (nreverse parts)))))
+
+(defun %canonical-mime-bytes (raw entity)
+  (cond
+    ((and raw (vectorp raw) (not (stringp raw))) raw)
+    ((and raw (stringp raw))
+     (map '(vector (unsigned-byte 8)) #'char-code raw))
+    (entity
+     (map '(vector (unsigned-byte 8)) #'char-code (mime:print-mime entity)))
+    (t #())))
+
+(defun %message-id-header (entity)
+  (or (and entity (mime:header-value entity "message-id"))
+      ""))
+
+(defun %imap-item-from-message (source seq msg)
+  (let* ((raw (if (stringp msg) msg (ignore-errors (mail:print-message msg))))
+         (entity (or (%message-entity msg)
+                     (and raw (handler-case (mime:parse-mime raw)
+                                (error () nil)))))
+         (uid (or (and raw (%parse-fetch-uid raw)) seq))
+         (mid (string-trim '(#\Space #\< #\>) (%message-id-header entity)))
+         (id (format nil "~a+~a"
+                     (if (plusp (length mid)) mid "unknown")
+                     uid))
+         (text (let ((collected (and entity (%collect-mime-text entity))))
+                 (if (and collected (plusp (length collected)))
+                     collected
+                     (%message-text msg))))
+         (bytes (%canonical-mime-bytes raw entity)))
+    (make-ingest-item
+     :id id
+     :uri (format nil "imap:~a:~a" (imap-source-mailbox source) id)
+     :content text
+     :hash (content-hash (if (plusp (length bytes)) bytes text))
+     :format :txt
+     :metadata (list :mailbox (imap-source-mailbox source)
+                     :seq seq
+                     :uid uid
+                     :message-id mid))))
+
 (defmethod enumerate-items ((source imap-source))
   (let ((client (%ensure-imap-client source)))
     (when (eq (mail:imap-client-state client) :disconnected)
@@ -165,54 +310,78 @@
                     nil)))
       (loop for seq in seqs
             nconc (loop for msg in (mail:imap-fetch client seq)
-                        for text = (%message-text msg)
-                        for id = (format nil "imap:~a:~a"
-                                         (imap-source-mailbox source) seq)
-                        collect (make-ingest-item
-                                 :id id
-                                 :uri id
-                                 :content text
-                                 :hash (content-hash text)
-                                 :format :txt
-                                 :metadata (list :mailbox
-                                                 (imap-source-mailbox source)
-                                                 :seq seq)))))))
+                        collect (%imap-item-from-message source seq msg))))))
 
 (defclass s3-source (ingest-source)
   ((store :initarg :store :accessor s3-source-store)
    (bucket :initarg :bucket :accessor s3-source-bucket :initform nil)
-   (prefix :initarg :prefix :accessor s3-source-prefix :initform "")))
+   (prefix :initarg :prefix :accessor s3-source-prefix :initform "")
+   (page-size :initarg :page-size :accessor s3-source-page-size
+              :initform 1000)))
 
 (defun s3-source-p (x)
   (typep x 's3-source))
 
-(defun make-s3-source (&key store bucket (prefix ""))
-  (make-instance 's3-source :store store :bucket bucket :prefix (or prefix "")))
+(defun make-s3-source (&key store bucket (prefix "") (page-size 1000))
+  (make-instance 's3-source :store store :bucket bucket :prefix (or prefix "")
+                            :page-size (or page-size 1000)))
 
 (defun %object-text (bytes)
   (if (stringp bytes)
       bytes
       (map 'string #'code-char bytes)))
 
+(defun %list-objects-paged (store prefix page-size)
+  "Drain LIST-OBJECTS via continuation-token until the listing is complete."
+  (loop with token = nil
+        for listing = (apply #'obj:list-objects store
+                             :prefix prefix
+                             (append (when page-size
+                                       (list :max-keys page-size))
+                                     (when token
+                                       (list :continuation-token token))))
+        append (copy-list (obj:object-listing-objects listing))
+        do (setf token (obj:object-listing-continuation-token listing))
+        while (obj:object-listing-truncated-p listing)))
+
+(defun %ensure-item-content (item)
+  "Load octets on demand when CONTENT is empty (S3 get-object)."
+  (when (and (null (ingest-item-content item))
+             (ingest-item-metadata item))
+    (let* ((meta (ingest-item-metadata item))
+           (store (getf meta :object-store))
+           (key (getf meta :key)))
+      (when (and store key)
+        (let ((bytes (obj:get-object store key)))
+          (setf (ingest-item-content item) (%object-text bytes))
+          (unless (ingest-item-hash item)
+            (setf (ingest-item-hash item) (content-hash bytes)))))))
+  (ingest-item-content item))
+
 (defmethod enumerate-items ((source s3-source))
   (let* ((store (or (s3-source-store source) obj:*object-store*))
          (prefix (or (s3-source-prefix source) ""))
-         (bucket (s3-source-bucket source)))
+         (bucket (s3-source-bucket source))
+         (page-size (s3-source-page-size source)))
     (unless store
       (error 'ingest-source-error
              :source source
              :message "s3-source has no object-store"))
-    (let ((listing (obj:list-objects store :prefix prefix)))
-      (loop for stat in (obj:object-listing-objects listing)
-            for key = (obj:object-stat-key stat)
-            for bytes = (obj:get-object store key)
-            collect (make-ingest-item
-                     :id key
-                     :uri (format nil "s3://~a/~a" (or bucket "") key)
-                     :content (%object-text bytes)
-                     :hash (content-hash bytes)
-                     :format (%infer-format key)
-                     :metadata (list :bucket bucket :key key))))))
+    (loop for stat in (%list-objects-paged store prefix page-size)
+          for key = (obj:object-stat-key stat)
+          for head = (handler-case (obj:head-object store key)
+                       (error () nil))
+          for etag = (or (and head (obj:object-stat-etag head))
+                         (obj:object-stat-etag stat))
+          for bytes = (obj:get-object store key)
+          collect (make-ingest-item
+                   :id key
+                   :uri (format nil "s3://~a/~a" (or bucket "") key)
+                   :content (%object-text bytes)
+                   :hash (content-hash bytes)
+                   :format (%infer-format key)
+                   :metadata (list :bucket bucket :key key :etag etag
+                                   :object-store store)))))
 
 ;;; Fallback extractor so .md/.txt ingest works without a live office backend.
 (defclass plain-text-extractor (doc:doc-extract-backend) ())

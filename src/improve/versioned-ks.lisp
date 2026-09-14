@@ -135,6 +135,9 @@
                                      :cycle-id (versioned-ks-cycle-id vks)))
               :actual actual)))
     (push obs (versioned-ks-observations vks))
+    (demiurge::%observe-record "RECORD-EVAL-SCORE"
+                               (bb:ks-name vks)
+                               (if actual 1 0))
     obs))
 
 (defmethod ks-watch-keys ((ks versioned-ks))

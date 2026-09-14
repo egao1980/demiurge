@@ -41,7 +41,22 @@
            (items (enumerate-items source)))
       (ok (= 1 (length items)))
       (ok (equal (content-hash bytes) (ingest-item-hash (first items))))
-      (ok (search "hello s3" (ingest-item-content (first items)))))))
+      (ok (search "hello s3" (ingest-item-content (first items))))
+      (ok (getf (ingest-item-metadata (first items)) :etag)
+          "head-object etag is recorded as a change signal"))))
+
+(deftest s3-source-pages-list-objects
+  (let* ((store (obj:make-in-memory-object-store))
+         (a (map '(vector (unsigned-byte 8)) #'char-code "aaa"))
+         (b (map '(vector (unsigned-byte 8)) #'char-code "bbb")))
+    (obj:put-object store "docs/a.md" a)
+    (obj:put-object store "docs/b.md" b)
+    (let* ((source (make-s3-source :store store :bucket "demo"
+                                   :prefix "docs/" :page-size 1))
+           (items (enumerate-items source)))
+      (ok (= 2 (length items)))
+      (ok (equal (sort (mapcar #'ingest-item-id items) #'string<)
+                 '("docs/a.md" "docs/b.md"))))))
 
 (deftest imap-source-enumerates-scripted-mailbox
   (let* ((msg (mail:print-message
@@ -68,7 +83,10 @@
     (let ((items (enumerate-items source)))
       (ok (plusp (length items)))
       (ok (search "imap body" (ingest-item-content (first items))))
-      (ok (ingest-item-hash (first items))))))
+      (ok (ingest-item-hash (first items)))
+      (ok (search "+" (ingest-item-id (first items)))
+          "stable id is Message-ID+UID")
+      (ok (getf (ingest-item-metadata (first items)) :uid)))))
 
 (deftest ingest-kill-and-resume-no-duplicates
   (with-tmp-dir (tmp)
@@ -142,4 +160,23 @@
                   :embedder (mock-llm))
       (ok (= 1 (length (stored-content-hashes store))))
       (ok (equal (stored-content-hashes store)
-                 (mapcar #'ingest-item-hash (enumerate-items source)))))))
+                 (mapcar #'ingest-item-hash (enumerate-items source))))
+      (let* ((journal (task:make-in-memory-journal))
+             (task-id "sweep-3"))
+        (run-ingest domain source
+                    :store store
+                    :journal journal
+                    :task-id task-id
+                    :embedder (mock-llm))
+        (let* ((task (task:make-durable-task :id task-id :journal journal))
+               (events (task:journal-events journal task))
+               (sweep (find-if (lambda (ev)
+                                 (and (typep ev 'task:step-completed)
+                                      (equal "sweep" (task:step-name ev))))
+                               events))
+               (report (and sweep (task:step-result sweep))))
+          (ok sweep)
+          (ok (eq :sweep-completed (getf report :event)))
+          (ok (numberp (getf report :stale)))
+          (ok (numberp (getf report :stored)))
+          (ok (numberp (getf report :enumerated))))))))
