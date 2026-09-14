@@ -64,7 +64,7 @@
                  (bundle-corpus-item-digest
                   (first (bundle-corpus-source-items
                           (first (expert-bundle-manifest-corpus-sources
-                                  parsed)))))))))))
+                                  parsed))))))))
 
 (deftest pack-install-round-trip
   "pack→install against a local OCI layout; installed echo-expert is runnable."
