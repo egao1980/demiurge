@@ -276,19 +276,23 @@
           when (schema:slot-wire-p slot)
             collect (schema:slot-wire-key slot class))))
 
+(defun %schema-class-name-p (name)
+  (let ((class (and (symbolp name) (find-class name nil))))
+    (and class (schema:schema-class-p class))))
+
 (defun %slot-nested-schema (slot)
   (let ((elt (ignore-errors (schema:slot-element-type slot))))
     (cond
-      ((and elt (symbolp elt) (schema:schema-name-p elt)) elt)
+      ((and elt (symbolp elt) (%schema-class-name-p elt)) elt)
       (t
        (let* ((mop (find-symbol "SLOT-DEFINITION-TYPE" "CLOSER-MOP"))
               (spec (and mop (funcall mop slot))))
          (cond
-           ((and spec (symbolp spec) (schema:schema-name-p spec)) spec)
+           ((and spec (symbolp spec) (%schema-class-name-p spec)) spec)
            ((and (consp spec)
                  (member (first spec) '(list vector sequence))
                  (symbolp (second spec))
-                 (schema:schema-name-p (second spec)))
+                 (%schema-class-name-p (second spec)))
             (second spec))
            (t nil)))))))
 
