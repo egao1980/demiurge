@@ -723,8 +723,8 @@
                             :path pathname
                             :message (format nil "expert.toml not found: ~a"
                                              pathname))))
-         (improve (expert-config-improve config))
-         (hitl (and improve (expert-config-improve-hitl improve)))
+         (improve (%maybe config #'expert-config-improve))
+         (hitl (and improve (%maybe improve #'expert-config-improve-hitl)))
          (profile (or profile (%config-profile config :hitl hitl)))
          (llm (or llm
                   (let ((section (expert-config-llm config)))
