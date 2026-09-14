@@ -35,14 +35,17 @@
                            "demiurge/serve"
                            "demiurge/ingest"
                            "demiurge/workflows"
-                           "demiurge/bundle")
+                           "demiurge/bundle"
+                           "demiurge/cli")
                 :ci (:with ("event-backend-libuv"
                             "sql-backend-sqlite3"
                             "log-backend-log4cl"
                             "telemetry-backend-otlp"
                             "crypto-backend-ironclad"
                             "json-backend-jzon"
-                            "toml-backend-tomlet"))))
+                            "toml-backend-tomlet"
+                            "cli-protocol"
+                            "cli-backend-clingon"))))
   :serial t
   :pathname "src"
   :components ((:file "package")
@@ -181,10 +184,31 @@
                (:file "install")
                (:file "expert-config")))
 
+(defsystem "demiurge/cli"
+  :version "0.3.6"
+  :description "demiurge command-line entrypoint (cli-protocol + clingon)"
+  :author "egao1980"
+  :license "MIT"
+  :depends-on ("demiurge"
+               "demiurge/serve"
+               "demiurge/ingest"
+               "demiurge/improve"
+               "demiurge/workflows"
+               "demiurge/bundle"
+               "cli-protocol"
+               "cli-backend-clingon")
+  :build-operation asdf:program-op
+  :build-pathname "demiurge"
+  :entry-point "demiurge/cli:main"
+  :serial t
+  :pathname "src/cli"
+  :components ((:file "package")
+               (:file "command")))
+
 (defsystem "demiurge/tests"
   :depends-on ("demiurge" "demiurge/improve" "demiurge/observe"
                "demiurge/serve" "demiurge/ingest" "demiurge/workflows"
-               "demiurge/bundle"
+               "demiurge/bundle" "demiurge/cli"
                "llm-protocol" "event-backend-libuv"
                "sql-backend-sqlite3"
                "crypto-backend-ironclad"
@@ -206,6 +230,7 @@
                (:file "workflows-test")
                (:file "bundle-test")
                (:file "expert-config-test")
+               (:file "cli-test")
                (:file "corporate-test"))
   :perform (test-op (o c)
              (unless (symbol-call :rove :run c)

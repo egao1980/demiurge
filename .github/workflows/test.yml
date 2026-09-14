@@ -10,3 +10,16 @@ on:
 jobs:
   test:
     uses: egao1980/cl-repository/.github/workflows/test-system.yml@main
+  program:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: egao1980/cl-repository/.github/actions/setup-client@main
+      - uses: egao1980/cl-repository/.github/actions/setup-roswell@main
+      - uses: egao1980/cl-repository/.github/actions/ci@main
+        with: { phase: install }
+      - name: program-op
+        run: ros -e '(progn (asdf:make "demiurge/cli") (uiop:quit 0))'

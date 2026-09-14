@@ -1,9 +1,10 @@
 (defpackage #:demiurge/tests
   (:use #:cl #:rove #:demiurge #:demiurge/improve #:demiurge/observe
         #:demiurge/serve #:demiurge/ingest #:demiurge/workflows
-        #:demiurge/bundle)
+        #:demiurge/bundle #:demiurge/cli)
   (:shadowing-import-from #:demiurge #:run-tests)
-  (:local-nicknames (#:bb #:blackboard-protocol)
+  (:local-nicknames (#:cli #:cli-protocol)
+                    (#:bb #:blackboard-protocol)
                     (#:cap #:capability-protocol)
                     (#:agent #:ai-agent-protocol)
                     (#:llm #:llm-protocol)

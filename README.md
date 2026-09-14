@@ -4,13 +4,14 @@ Product core for [cl-stack](https://github.com/egao1980/cl-stack) expert systems
 
 | System | Role |
 |--------|------|
-| `demiurge` (`stack-demiurge`) 0.3.4 | `expert-domain`, `defexpert`, `agent-ks`, controller, personal + corporate profiles |
-| `demiurge/improve` 0.3.4 | Versioned-KS improvement cycle |
-| `demiurge/observe` 0.3.4 | Span/metric taxonomy, `/healthz` + `/readyz`, profiles |
-| `demiurge/serve` 0.3.4 | MCP / A2A / AG-UI Clack app + feedback |
-| `demiurge/ingest` 0.3.4 | Durable file / IMAP / object-store ingest |
-| `demiurge/workflows` 0.3.4 | Durable project workflows + deep-research fan-out |
-| `demiurge/bundle` 0.3.4 | Expert-bundle pack / hash-verified install / rollback (local OCI layout) |
+| `demiurge` (`stack-demiurge`) 0.3.6 | `expert-domain`, `defexpert`, `agent-ks`, controller, personal + corporate profiles |
+| `demiurge/improve` 0.3.6 | Versioned-KS improvement cycle |
+| `demiurge/observe` 0.3.6 | Span/metric taxonomy, `/healthz` + `/readyz`, profiles |
+| `demiurge/serve` 0.3.6 | MCP / A2A / AG-UI Clack app + feedback |
+| `demiurge/ingest` 0.3.6 | Durable file / IMAP / object-store ingest |
+| `demiurge/workflows` 0.3.6 | Durable project workflows + deep-research fan-out |
+| `demiurge/bundle` 0.3.6 | Expert-bundle pack / hash-verified install / rollback (local OCI layout) |
+| `demiurge/cli` 0.3.6 | `demiurge` command (`cli-protocol` + clingon) over those GFs |
 
 ```lisp
 (asdf:load-system "demiurge")
@@ -41,7 +42,9 @@ Product core for [cl-stack](https://github.com/egao1980/cl-stack) expert systems
 
 **Bundle** (`demiurge/bundle`): `(pack-expert domain &key registry version)` writes a local OCI layout (`oci-layout` + `index.json` + `blobs/sha256/…`) with checksum annotations (cosign slot reserved). `(install-expert ref &key profile)` is a durable task: pull → verify every content hash (`bundle-verification-error` on mismatch; no `skip-verification` restart) → register domain → `run-ingest` as child durable steps with unique `ingest-item/<hash>` names. `(rollback-expert name version)` re-registers the prior manifest and `rollback-skill` on the A4/`steer-protocol` file skill store.
 
-**Reference experts:** `make-echo-expert` (minimal) and `make-cl-dev-expert` (lookup-symbol / search-corpus / `:compute`-gated run-tests, steering skills, docs corpus, ~20 eval cases).
+**CLI** (`demiurge/cli`): `serve` / `ask` / `research` / `ingest` / `improve` / `install` / `demo` parse flags, `(load-expert-config path :register t)`, and call the matching GF. Binary: `(asdf:make "demiurge/cli")` (`program-op` → `./demiurge`). Fallback without a dumped image: `ros -l scripts/demiurge.lisp -- ask --config examples/cl-dev-expert.toml "question"` (or `sbcl --load scripts/demiurge.lisp`).
+
+**Reference experts:** `make-echo-expert` (minimal) and `make-cl-dev-expert` (lookup-symbol / search-corpus / `:compute`-gated run-tests, steering skills, docs corpus, ~20 eval cases). Golden config: `examples/cl-dev-expert.toml`.
 
 ## License
 
