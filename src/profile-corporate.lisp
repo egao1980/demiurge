@@ -324,8 +324,8 @@
                             directory
                             :base base-dn
                             :scope :sub
-                            :filter `(| (= "member" ,dn)
-                                        (= "uniqueMember" ,dn))))
+                            :filter `(:or (= "member" ,dn)
+                                          (= "uniqueMember" ,dn))))
                          nil))
           (push (ldap:ldap-entry-dn hit) groups))))
     (remove-duplicates groups :test #'string-equal)))
@@ -350,9 +350,9 @@
                        dir
                        :base (or base "")
                        :scope :sub
-                       :filter `(| (= "uid" ,subject)
-                                   (= "cn" ,subject)
-                                   (= "mail" ,subject)))))))
+                       :filter `(:or (= "uid" ,subject)
+                                     (= "cn" ,subject)
+                                     (= "mail" ,subject)))))))
     (if hits
         (ldap:ldap-entry-dn (first hits))
         (if (and base (plusp (length (string base))))
