@@ -147,6 +147,7 @@
                "eval-protocol"
                "rag-protocol"
                "llm-protocol"
+               "llm-protocol/schema"
                "llm-protocol/router"
                "task-protocol"
                "mcp-protocol")
@@ -211,7 +212,7 @@
   :depends-on ("demiurge" "demiurge/improve" "demiurge/observe"
                "demiurge/serve" "demiurge/ingest" "demiurge/workflows"
                "demiurge/bundle" "demiurge/cli"
-               "llm-protocol" "llm-protocol-openai"
+               "llm-protocol" "llm-protocol/schema" "llm-protocol-openai"
                "http-backend-dexador"
                "event-backend-libuv"
                "sql-backend-sqlite3"

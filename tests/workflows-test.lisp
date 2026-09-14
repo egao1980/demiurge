@@ -119,6 +119,11 @@
                (research-subquestion-question
                 (second (research-plan-subquestions plan)))))))
 
+(deftest research-plan-emits-json-schema
+  "Live openai-compat needs llm-protocol/schema for :output research-plan."
+  (let ((schema (llm:structured-output-json-schema 'research-plan)))
+    (ok (hash-table-p schema))))
+
 (deftest deep-research-e2e-mock-llm-websearch
   (let* ((board (bb:make-blackboard))
          (result (%run-research :task-id "research-e2e"
