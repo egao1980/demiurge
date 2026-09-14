@@ -255,7 +255,7 @@
     (ok (stringp (getf result :markdown)))
     (ok (search "incomplete" (string-downcase (getf result :markdown))))
     (ok (search "Budget scope:" (getf result :markdown))
-        "partial report still surfaces the budget footer"))))
+        "partial report still surfaces the budget footer")))
 
 (deftest deep-research-workspace-rag-and-mcp
   "Fetched pages land on the board, RAG retrieve, and MCP resources."
