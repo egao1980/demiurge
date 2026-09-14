@@ -445,11 +445,21 @@
        (%print-ingest spec got)
        (list* :command :ingest got)))))
 
+(defun %apply-demo-env (spec)
+  "DEMIURGE_PARITY_DEMO_LLM / _WEBSEARCH override demo.toml tiers when set."
+  (let ((env-llm (uiop:getenv "DEMIURGE_PARITY_DEMO_LLM"))
+        (env-ws (uiop:getenv "DEMIURGE_PARITY_DEMO_WEBSEARCH")))
+    (when (and env-llm (plusp (length env-llm)))
+      (setf (getf spec :llm) (%demo-tier env-llm)))
+    (when (and env-ws (plusp (length env-ws)))
+      (setf (getf spec :websearch) (%demo-tier env-ws))))
+  spec)
+
 (defun cmd-demo (opts free)
   (declare (ignore opts))
   (let* ((dir (uiop:ensure-directory-pathname
                (%require-arg free "demo requires a directory")))
-         (spec (%demo-defaults dir))
+         (spec (%apply-demo-env (%demo-defaults dir)))
          (domain (%resolve-expert (getf spec :expert) :base-dir dir))
          (default-cmd (getf spec :command))
          (queries (%query-lines (getf spec :queries)))
