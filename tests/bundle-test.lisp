@@ -38,33 +38,19 @@
                                   :uri "a.md" :digest "def"))))))
          (text (demiurge/bundle::%manifest-text m))
          (sexp (demiurge/bundle::%read-sexp text))
-         (parsed (demiurge/bundle::%parse-manifest-plist sexp)))
+         (parsed (demiurge/bundle::%parse-manifest-plist sexp))
+         (item (first (bundle-corpus-source-items
+                       (first (expert-bundle-manifest-corpus-sources parsed))))))
     (ok (not (search "#<" text))
         "manifest text must not contain unreadable #<HASH-TABLE>")
     (ok (keywordp (first sexp))
         (format nil "sexp must start with a keyword, got ~s" (first sexp)))
-    (ok (equal "round" (getf sexp :name))
-        (format nil "sexp :name=~s head=~s" (getf sexp :name)
-                (subseq sexp 0 (min 6 (length sexp)))))
-    (ok (equal "round" (expert-bundle-manifest-name parsed))
-        (format nil "parsed name=~s version=~s"
-                (expert-bundle-manifest-name parsed)
-                (expert-bundle-manifest-version parsed)))
-    (ok (equal "1.2.3" (expert-bundle-manifest-version parsed))
-        (format nil "parsed version=~s" (expert-bundle-manifest-version parsed)))
+    (ok (equal "round" (getf sexp :name)))
+    (ok (equal "round" (expert-bundle-manifest-name parsed)))
+    (ok (equal "1.2.3" (expert-bundle-manifest-version parsed)))
     (ok (equal "1" (bundle-skill-ref-version
-                    (first (expert-bundle-manifest-skill-refs parsed))))
-        "nested skill-ref keys must not be swapped")
-    (ok (equal "def" (bundle-corpus-item-digest
-                      (first (bundle-corpus-source-items
-                              (first (expert-bundle-manifest-corpus-sources
-                                      parsed))))))
-        (format nil "corpus digest=~s"
-                (ignore-errors
-                 (bundle-corpus-item-digest
-                  (first (bundle-corpus-source-items
-                          (first (expert-bundle-manifest-corpus-sources
-                                  parsed))))))))
+                    (first (expert-bundle-manifest-skill-refs parsed)))))
+    (ok (equal "def" (bundle-corpus-item-digest item)))))
 
 (deftest pack-install-round-trip
   "pack→install against a local OCI layout; installed echo-expert is runnable."
