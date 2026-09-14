@@ -184,15 +184,40 @@
                      (char= (char trimmed 0) #\#))
             collect trimmed)))
 
+(defun %prefix-eq (line prefix)
+  (let ((n (length prefix)))
+    (and (>= (length line) n)
+         (string-equal prefix line :end2 n))))
+
 (defun %split-query (line default-cmd)
   (cond
-    ((and (>= (length line) 9)
-          (string-equal "research:" line :end2 9))
+    ((%prefix-eq line "research:")
      (values :research (string-trim '(#\Space #\Tab) (subseq line 9))))
-    ((and (>= (length line) 4)
-          (string-equal "ask:" line :end2 4))
+    ((%prefix-eq line "improve:")
+     (values :improve (string-trim '(#\Space #\Tab) (subseq line 8))))
+    ((%prefix-eq line "ingest:")
+     (values :ingest (string-trim '(#\Space #\Tab) (subseq line 7))))
+    ((%prefix-eq line "ask:")
      (values :ask (string-trim '(#\Space #\Tab) (subseq line 4))))
     (t (values default-cmd line))))
+
+(defun %demo-tier (value)
+  "auto|live|mock (default auto)."
+  (let ((token (string-downcase (string (or value "auto")))))
+    (cond
+      ((member token '("live" "local" "lmstudio" "llama" "searx" "searxng")
+               :test #'equal)
+       :live)
+      ((member token '("mock" "scripted") :test #'equal) :mock)
+      (t :auto))))
+
+(defun %demo-narration (value)
+  "quiet|normal|verbose (default normal)."
+  (let ((token (string-downcase (string (or value "normal")))))
+    (cond
+      ((member token '("quiet" "off" "none") :test #'equal) :quiet)
+      ((member token '("verbose" "full") :test #'equal) :verbose)
+      (t :normal))))
 
 (defun %demo-defaults (dir)
   (let ((demo (merge-pathnames "demo.toml" dir)))
@@ -203,17 +228,66 @@
                  (expert (or (%table-get table "expert" "config")
                              "expert.toml"))
                  (queries (or (%table-get table "queries") "queries.md"))
-                 (command (or (%table-get table "command") "ask")))
+                 (command (or (%table-get table "command") "ask"))
+                 (fixtures (%table-get table "websearch-fixtures" "fixtures")))
             (list :dir dir
                   :demo demo
                   :expert expert
                   :queries (merge-pathnames queries dir)
-                  :command (%keywordize command))))
+                  :command (%keywordize command)
+                  :llm (%demo-tier (%table-get table "llm"))
+                  :websearch (%demo-tier (%table-get table "websearch"))
+                  :narration (%demo-narration
+                              (%table-get table "narration" "verbosity"))
+                  :websearch-fixtures
+                  (when fixtures (merge-pathnames fixtures dir)))))
         (list :dir dir
               :demo nil
               :expert "expert.toml"
               :queries (merge-pathnames "queries.md" dir)
-              :command :ask))))
+              :command :ask
+              :llm :auto
+              :websearch :auto
+              :narration :normal
+              :websearch-fixtures nil))))
+
+(defun %demo-narrate (spec fmt &rest args)
+  (unless (eq (getf spec :narration) :quiet)
+    (format t "~&~%── ~?~%" fmt args)
+    (finish-output)))
+
+(defun %demo-look-at (spec fmt &rest args)
+  (when (eq (getf spec :narration) :verbose)
+    (format t "~&   look at: ~?~%" fmt args)
+    (finish-output)))
+
+(defun %demo-kv (spec key value)
+  (unless (eq (getf spec :narration) :quiet)
+    (format t "~&   ~A: ~S~%" key value)
+    (finish-output)))
+
+(defun %print-improve (spec result)
+  (%demo-kv spec "verdict" (or (getf result :verdict) :unknown))
+  (%demo-kv spec "cycle-id" (getf result :cycle-id))
+  (%demo-kv spec "baseline-score" (getf result :baseline-score))
+  (%demo-kv spec "candidate-score" (getf result :candidate-score))
+  (%demo-kv spec "eval-run-id" (getf result :eval-run-id))
+  result)
+
+(defun %print-ingest (spec result)
+  (%demo-kv spec "hashes" (length (or (getf result :hashes) '())))
+  result)
+
+(defun %board-sections (board)
+  (when (typep board 'bb:blackboard)
+    (ignore-errors (bb:list-sections board))))
+
+(defun %print-ask-verbose (spec board)
+  (when (and (eq (getf spec :narration) :verbose) board)
+    (let ((keys (%board-sections board)))
+      (%demo-kv spec "section keys" keys)
+      (dolist (key keys)
+        (%demo-kv spec key (bb:read-section board key :default nil))))))
 
 (defun cmd-serve (opts free)
   (declare (ignore free))
@@ -297,6 +371,80 @@
     (format t "installed ~a~%" (or (getf result :name) ref))
     result))
 
+(defun %fixture-hits (path)
+  "Load [[hit]] rows from a TOML fixtures file → list of query/url/title/snippet."
+  (when (and path (probe-file path))
+    (%ensure-toml)
+    (let* ((table (toml:decode path))
+           (rows (or (%table-get table "hit" "hits") '()))
+           (list (cond
+                   ((listp rows) rows)
+                   ((and (vectorp rows) (not (stringp rows)))
+                    (coerce rows 'list))
+                   (t (list rows)))))
+      (mapcar (lambda (row)
+                (list :query (or (%table-get row "query") "")
+                      :url (or (%table-get row "url") "")
+                      :title (or (%table-get row "title" "query") "")
+                      :snippet (or (%table-get row "snippet") "")))
+              list))))
+
+(defun %bind-mock-websearch (spec)
+  "Bind a fixtures-backed mock websearch when websearch=mock or a fixtures file exists."
+  (let ((hits (%fixture-hits (getf spec :websearch-fixtures))))
+    (when (or hits (eq (getf spec :websearch) :mock))
+      (setf web:*websearch-backend*
+            (web:make-mock-websearch-backend
+             :handler
+             (lambda (backend query &key &allow-other-keys)
+               (declare (ignore backend))
+               (let ((row (or (find query hits :key (lambda (h) (getf h :query))
+                                    :test #'string-equal)
+                              (first hits))))
+                 (when row
+                   (list (web:make-search-hit
+                          :url (getf row :url)
+                          :title (getf row :title)
+                          :snippet (getf row :snippet)
+                          :rank 1
+                          :source "mock"))))))))))
+
+(defun %run-demo-query (spec domain cmd question)
+  (ecase cmd
+    ((:boot :resume :corporate)
+     (error 'cli:cli-usage-error
+            :message (format nil "command ~a is parity-specific; use demos/runner.lisp"
+                             cmd)))
+    (:ask
+     (%demo-look-at spec "board :result write and citation :block-id metadata")
+     (multiple-value-bind (text fid board)
+         (serve:ask-expert domain question)
+       (%print-ask text fid board)
+       (%print-ask-verbose spec board)
+       (list :command :ask :text text :feedback-id fid
+             :citations (%board-citations board))))
+    (:research
+     (%demo-look-at spec "verdict, child answers, citations, rendered report")
+     (let ((got (%call-research domain question)))
+       (%demo-kv spec "verdict" (or (getf got :verdict) :unknown))
+       (%demo-kv spec "child count" (length (getf got :children)))
+       (when (getf got :markdown)
+         (format t "~a~%" (getf got :markdown)))
+       (list* :command :research got)))
+    (:improve
+     (%demo-look-at spec "gate verdict, baseline vs candidate scores")
+     (let ((got (%run-improve domain nil)))
+       (%print-improve spec got)
+       (list* :command :improve got)))
+    (:ingest
+     (%demo-look-at spec "ingest hashes from the named (or first) corpus source")
+     (let* ((source (%ingest-source-for
+                     domain
+                     :name (and question (plusp (length question)) question)))
+            (got (ingest:run-ingest domain source)))
+       (%print-ingest spec got)
+       (list* :command :ingest got)))))
+
 (defun cmd-demo (opts free)
   (declare (ignore opts))
   (let* ((dir (uiop:ensure-directory-pathname
@@ -306,29 +454,22 @@
          (default-cmd (getf spec :command))
          (queries (%query-lines (getf spec :queries)))
          (results '()))
-    (format t "demo ~a expert ~a command ~a~%"
-            dir (expert-name domain) default-cmd)
+    (%demo-narrate spec "demo ~a" dir)
+    (%demo-kv spec "expert" (expert-name domain))
+    (%demo-kv spec "command" default-cmd)
+    (%demo-kv spec "llm" (getf spec :llm))
+    (%demo-kv spec "websearch" (getf spec :websearch))
+    (%bind-mock-websearch spec)
+    (when (eq (getf spec :narration) :quiet)
+      (format t "demo ~a expert ~a command ~a~%"
+              dir (expert-name domain) default-cmd))
     (unless queries
       (format t "no queries in ~a~%" (getf spec :queries)))
     (dolist (line queries)
       (multiple-value-bind (cmd question)
           (%split-query line default-cmd)
-        (format t "~%→ ~a ~s~%" cmd question)
-        (let ((result
-               (ecase cmd
-                 (:ask
-                  (multiple-value-bind (text fid board)
-                      (serve:ask-expert domain question)
-                    (%print-ask text fid board)
-                    (list :command :ask :text text :feedback-id fid
-                          :citations (%board-citations board))))
-                 (:research
-                  (let ((got (%call-research domain question)))
-                    (format t "verdict: ~a~%" (or (getf got :verdict) :unknown))
-                    (when (getf got :markdown)
-                      (format t "~a~%" (getf got :markdown)))
-                    (list* :command :research got))))))
-          (push result results))))
+        (%demo-narrate spec "~a ~s" cmd question)
+        (push (%run-demo-query spec domain cmd question) results)))
     (nreverse results)))
 
 (defun make-app ()
@@ -409,7 +550,7 @@
      :handler #'cmd-install)
     (cli:make-command
      :name "demo"
-     :description "Narrated ask/research runner over a demo directory."
+     :description "Narrated ask/research/improve/ingest runner over a demo directory."
      :handler #'cmd-demo))))
 
 (defun %command-for-argv (command argv)

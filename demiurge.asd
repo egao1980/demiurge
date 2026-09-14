@@ -196,7 +196,8 @@
                "demiurge/workflows"
                "demiurge/bundle"
                "cli-protocol"
-               "cli-backend-clingon")
+               "cli-backend-clingon"
+               "websearch-protocol")
   :build-operation asdf:program-op
   :build-pathname "demiurge"
   :entry-point "demiurge/cli:main"

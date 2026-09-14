@@ -136,10 +136,47 @@
           (write-string "expert = \"echo.toml\"
 command = \"ask\"
 queries = \"qs.md\"
+llm = \"mock\"
+websearch = \"mock\"
+narration = \"normal\"
 " out))
         (with-open-file (out queries :direction :output :if-exists :supersede
                              :if-does-not-exist :create)
           (write-string "hi~%" out))
+        (ok (= 0 (%run-cli (list "demo" (namestring tmp)))))))))
+
+(deftest cli-demo-improve-ingest-prefixes
+  "improve: / ingest: query prefixes dispatch through cmd-demo."
+  (with-clean-registry
+    (with-tmp-dir (tmp)
+      (let ((toml (merge-pathnames "expert.toml" tmp))
+            (queries (merge-pathnames "queries.md" tmp)))
+        (uiop:copy-file (%echo-toml) toml)
+        (with-open-file (out queries :direction :output :if-exists :supersede
+                             :if-does-not-exist :create)
+          (format out "# comment~%ingest: corpus~%improve:~%"))
+        (multiple-value-bind (status)
+            (%run-cli (list "demo" (namestring tmp)))
+          (ok (= 0 status))
+          (ok (find-expert "echo")))))))
+
+(deftest cli-demo-command-improve
+  (with-clean-registry
+    (with-tmp-dir (tmp)
+      (let ((expert (merge-pathnames "echo.toml" tmp))
+            (demo (merge-pathnames "demo.toml" tmp))
+            (queries (merge-pathnames "queries.md" tmp)))
+        (uiop:copy-file (%echo-toml) expert)
+        (with-open-file (out demo :direction :output :if-exists :supersede
+                             :if-does-not-exist :create)
+          (write-string "expert = \"echo.toml\"
+command = \"improve\"
+llm = \"mock\"
+narration = \"quiet\"
+" out))
+        (with-open-file (out queries :direction :output :if-exists :supersede
+                             :if-does-not-exist :create)
+          (write-string "# expected: gate verdict printed~%cycle~%"))
         (ok (= 0 (%run-cli (list "demo" (namestring tmp)))))))))
 
 (deftest cli-exit-code-contract

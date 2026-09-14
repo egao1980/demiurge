@@ -10,7 +10,8 @@
                     (#:bundle #:demiurge/bundle)
                     (#:toml #:toml-protocol)
                     (#:doc #:doc-extract-protocol)
-                    (#:llm #:llm-protocol))
+                    (#:llm #:llm-protocol)
+                    (#:web #:websearch-protocol))
   (:export
    #:*serve-start*
    #:make-app
