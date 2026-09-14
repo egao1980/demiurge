@@ -12,51 +12,80 @@
          (write-string (if (stringp tn) tn (llm:turn-text tn)) s))))
     (t (princ-to-string turns))))
 
-(defun %research-llm (&key (questions *research-questions*))
-  (llm:make-mock-llm-backend
-   :handler
-   (lambda (backend turns &key &allow-other-keys)
-     (declare (ignore backend))
-     (let* ((text (%turns-text turns))
-            (sub-pos (search "Subquestion: " text))
-            (sub (when sub-pos
-                   (let* ((start (+ sub-pos (length "Subquestion: ")))
-                          (end (or (position #\Newline text :start start)
-                                   (length text))))
-                     (string-trim '(#\Space #\Tab #\Return) (subseq text start end)))))
-            (q (or (find sub questions :test #'string-equal)
-                   (find-if (lambda (q) (search q text)) questions))))
-       (cond
-         ((search "Gap analysis" text)
-          (llm:make-llm-response
-           :parts (list (llm:make-llm-text-part :text "none"))
-           :output (make-research-plan :question "q" :subquestions nil)))
-         ((search "Decompose" text)
-          (llm:make-llm-response
-           :parts (list (llm:make-llm-text-part :text "plan"))
-           :output (make-research-plan
-                    :question "CL expert systems"
-                    :subquestions
-                    (loop for q in questions
-                          for i from 1
-                          collect (make-research-subquestion
-                                   :id (format nil "q~d" i)
-                                   :question q)))))
-         ((or (search "ONE subquestion" text)
-              (search "research child" text)
-              (search "Subquestion:" text))
-          (llm:make-llm-response
-           :parts (list (llm:make-llm-text-part
-                         :text (format nil "ANSWER:~a [~a]"
-                                       (or q "unknown")
-                                       (if q
-                                           (format nil "src-~a"
-                                                   (substitute #\- #\Space q))
-                                           "src-1"))))))
-         (t
-          (llm:make-llm-response
-           :parts (list (llm:make-llm-text-part
-                         :text "Cited briefing over KSAR, the blackboard, and the journal.")))))))))
+(defun %research-llm (&key (questions *research-questions*)
+                           gap-once
+                           (include-answers-in-synthesis t)
+                           synthesis-text)
+  "Scripted research LLM.
+   GAP-ONCE (string) is emitted as a new subquestion on the first gap call.
+   INCLUDE-ANSWERS-IN-SYNTHESIS nil omits ANSWER: lines so the A1 gate fails."
+  (let ((gap-remaining (if gap-once 1 0))
+        (gap-q (if (stringp gap-once) gap-once "What is a restart?"))
+        (all-qs (if (and gap-once (stringp gap-once))
+                    (append questions (list gap-once))
+                    questions)))
+    (llm:make-mock-llm-backend
+     :handler
+     (lambda (backend turns &key &allow-other-keys)
+       (declare (ignore backend))
+       (let* ((text (%turns-text turns))
+              (sub-pos (search "Subquestion: " text))
+              (sub (when sub-pos
+                     (let* ((start (+ sub-pos (length "Subquestion: ")))
+                            (end (or (position #\Newline text :start start)
+                                     (length text))))
+                       (string-trim '(#\Space #\Tab #\Return)
+                                    (subseq text start end)))))
+              (q (or (find sub all-qs :test #'string-equal)
+                     (find-if (lambda (q) (search q text)) all-qs))))
+         (cond
+           ((search "Gap analysis" text)
+            (if (plusp gap-remaining)
+                (progn
+                  (decf gap-remaining)
+                  (llm:make-llm-response
+                   :parts (list (llm:make-llm-text-part :text "gap"))
+                   :output (make-research-plan
+                            :question "q"
+                            :subquestions
+                            (list (make-research-subquestion
+                                   :id "gap-1"
+                                   :question gap-q)))))
+                (llm:make-llm-response
+                 :parts (list (llm:make-llm-text-part :text "none"))
+                 :output (make-research-plan :question "q" :subquestions nil))))
+           ((search "Decompose" text)
+            (llm:make-llm-response
+             :parts (list (llm:make-llm-text-part :text "plan"))
+             :output (make-research-plan
+                      :question "CL expert systems"
+                      :subquestions
+                      (loop for q in questions
+                            for i from 1
+                            collect (make-research-subquestion
+                                     :id (format nil "q~d" i)
+                                     :question q)))))
+           ((or (search "ONE subquestion" text)
+                (search "research child" text)
+                (search "Subquestion:" text))
+            (llm:make-llm-response
+             :parts (list (llm:make-llm-text-part
+                           :text (format nil "ANSWER:~a [~a]"
+                                         (or q "unknown")
+                                         (if q
+                                             (format nil "src-~a"
+                                                     (substitute #\- #\Space q))
+                                             "src-1"))))))
+           (t
+            (llm:make-llm-response
+             :parts (list (llm:make-llm-text-part
+                           :text (or synthesis-text
+                                     (if include-answers-in-synthesis
+                                         (format nil "Cited briefing.~%~{~a~%~}"
+                                                 (mapcar (lambda (qq)
+                                                           (format nil "ANSWER:~a" qq))
+                                                         all-qs))
+                                         "I omit the expected findings."))))))))))))
 
 (defun %hit-url (query)
   (format nil "https://ex.test/~a" (substitute #\- #\Space (string query))))
@@ -90,8 +119,9 @@
                        journal (task:make-durable-task :id id)))))
 
 (defun %run-research (&key journal task-id llm websearch budget blackboard
-                        (max-rounds 1) (question "CL expert systems"))
-  (run-deep-research (%research-domain)
+                        (max-rounds 1) (question "CL expert systems")
+                        require-hitl browser domain)
+  (run-deep-research (or domain (%research-domain))
                      question
                      :max-rounds max-rounds
                      :budget budget
@@ -99,7 +129,9 @@
                      :websearch (or websearch (%research-websearch))
                      :journal (or journal (task:make-in-memory-journal))
                      :task-id (or task-id "research-e2e")
-                     :blackboard blackboard))
+                     :blackboard blackboard
+                     :require-hitl require-hitl
+                     :browser browser))
 
 (deftest make-research-plan-accepts-jzon-vector
   "jzon decodes JSON arrays as vectors; plan construction must not MAPCAR them."
@@ -123,10 +155,17 @@
   (let* ((board (bb:make-blackboard))
          (result (%run-research :task-id "research-e2e"
                                 :blackboard board)))
-    (ok (member (getf result :verdict) '(:pass :fail)))
+    (ok (eq :pass (getf result :verdict)))
     (ok (stringp (getf result :markdown)))
     (ok (= 3 (length (getf result :children))))
     (ok (bb:section-bound-p board :round-summary))
+    (ok (search "https://ex.test/" (getf result :markdown))
+        "rendered report includes a source URL")
+    (ok (search "[" (getf result :markdown))
+        "rendered report includes a block-id / source id")
+    (ok (search "Budget scope:" (getf result :markdown))
+        "rendered report includes the budget footer")
+    (ok (search "Sources" (getf result :markdown)))
     (dolist (q *research-questions*)
       (ok (search (format nil "ANSWER:~a" q) (getf result :markdown))
           (format nil "report cites ~a" q)))))
@@ -214,7 +253,9 @@
                  :budget (llm:make-llm-budget :max-tokens 0))))
     (ok (eq :incomplete (getf result :verdict)))
     (ok (stringp (getf result :markdown)))
-    (ok (search "incomplete" (string-downcase (getf result :markdown))))))
+    (ok (search "incomplete" (string-downcase (getf result :markdown))))
+    (ok (search "Budget scope:" (getf result :markdown))
+        "partial report still surfaces the budget footer"))))
 
 (deftest deep-research-workspace-rag-and-mcp
   "Fetched pages land on the board, RAG retrieve, and MCP resources."
@@ -287,3 +328,155 @@
     (ok (search "Common Lisp" (research-instruction ws :expert)))
     (ok (search "Common Lisp"
                 (getf (bb:read-section board :research-instructions) :expert)))))
+
+(deftest deep-research-gap-respawns-second-child
+  "A gap subquestion actually executes a second child (bounded by max-rounds)."
+  (let* ((exec '())
+         (gap-q "What is a restart?")
+         (*research-child-exec-hook*
+          (lambda (in)
+            (push (or (getf in :question) (getf in :id)) exec))))
+    (let ((result (%run-research
+                   :task-id "research-gap"
+                   :max-rounds 2
+                   :llm (%research-llm :questions '("What is KSAR?")
+                                       :gap-once gap-q))))
+      (ok (= 2 (length exec)) "plan child + gap child both executed")
+      (ok (find "What is KSAR?" exec :test #'equal))
+      (ok (find gap-q exec :test #'equal))
+      (ok (= 2 (length (getf result :children))))
+      (ok (eq :pass (getf result :verdict))))))
+
+(deftest deep-research-citations-not-search-dependent
+  "Delivered markdown lists block-ids and URLs even when the LLM omits them."
+  (let* ((result (%run-research
+                  :task-id "research-cites"
+                  :llm (%research-llm
+                        :questions '("What is KSAR?")
+                        :synthesis-text "Briefing with no inline cites."
+                        :include-answers-in-synthesis nil)))
+         (md (getf result :markdown))
+         (cites (collect-research-citations (getf result :children)
+                                            :workspace (getf result :workspace))))
+    (ok (plusp (length cites)))
+    (ok (find :block-id cites :key (lambda (c) (getf c :kind))))
+    (ok (find :link cites :key (lambda (c) (getf c :kind))))
+    (ok (search "https://ex.test/" md))
+    (ok (search "[" md) "block-id / source id appears in Sources")
+    (ok (search "Sources" md))
+    (ok (not (find-if (lambda (c)
+                        (search "https://ex.test/" (or (getf c :answer) "")))
+                      (getf result :children)))
+        "child answers need not echo the URL — the Sources section does")))
+
+(deftest deep-research-quality-gate-fails-when-synthesis-omits
+  "Scripted LLM that omits expected child text must not report :pass."
+  (let ((result (%run-research
+                 :task-id "research-gate-fail"
+                 :llm (%research-llm
+                       :questions '("What is KSAR?")
+                       :include-answers-in-synthesis nil
+                       :synthesis-text "I omit the expected findings."))))
+    (ok (eq :fail (getf result :verdict)))
+    (ok (not (eq :pass (getf result :verdict))))
+    (ok (stringp (getf result :markdown)))
+    (ok (search "ANSWER:What is KSAR?" (getf result :markdown))
+        "assembled child sections still land in the report")))
+
+(defun %ensure-browser-fallback-stub (dom)
+  "Real browser-protocol mock when loadable; otherwise a NAVIGATE/DOM-SNAPSHOT stub."
+  (or (ignore-errors
+        (asdf:load-system "browser-protocol" :verbose nil)
+        (let ((fn (find-symbol "MAKE-MOCK-BROWSER-BACKEND" :browser-protocol)))
+          (and fn (fboundp fn) (funcall fn :dom dom))))
+      (let* ((pkg (or (find-package '#:browser-protocol)
+                      (make-package '#:browser-protocol :use 'nil)))
+             (nav (intern "NAVIGATE" pkg))
+             (snap (intern "DOM-SNAPSHOT" pkg)))
+        (setf (symbol-function nav)
+              (lambda (browser url)
+                (declare (ignore browser))
+                url))
+        (setf (symbol-function snap)
+              (lambda (browser)
+                (declare (ignore browser))
+                dom))
+        (export (list nav snap) pkg)
+        :stub-browser)))
+
+(deftest deep-research-browser-fetch-page-fallback
+  "JS-heavy sources fall back to browser navigate + dom-snapshot when fetch-page fails."
+  (let* ((dom "BROWSER-DOM-FALLBACK body for JS-heavy source")
+         (browser (%ensure-browser-fallback-stub dom))
+         (web (web:make-mock-websearch-backend
+               :pages nil
+               :handler
+               (lambda (backend query &key &allow-other-keys)
+                 (declare (ignore backend query))
+                 (list (web:make-search-hit
+                        :url "https://ex.test/js-heavy"
+                        :title "JS-heavy"
+                        :snippet "snippet only"
+                        :rank 1
+                        :source "mock")))))
+    (let* ((result (%run-research
+                    :task-id "research-browser"
+                    :llm (%research-llm :questions '("What is KSAR?"))
+                    :websearch web
+                    :browser browser))
+           (ws (getf result :workspace))
+           (sources (and (research-workspace-p ws)
+                         (research-workspace-sources ws))))
+      (ok (find-if (lambda (s) (search "BROWSER-DOM-FALLBACK" (or (getf s :text) "")))
+                   sources)
+          "browser DOM text is ingested when fetch-page fails")
+      (ok (find-if (lambda (s) (eq :fetch (getf s :kind))) sources)
+          "ingested page is recorded as a fetch, not a snippet"))))
+
+(deftest deep-research-hitl-between-rounds-approve
+  "HITL checkpoint between rounds continues after invoke-approve."
+  (let* ((exec 0)
+         (*research-child-exec-hook*
+          (lambda (in)
+            (declare (ignore in))
+            (incf exec)))
+         (result
+          (handler-bind ((approval-required
+                          (lambda (c)
+                            (invoke-approve c))))
+            (%run-research
+             :task-id "research-hitl-ok"
+             :max-rounds 2
+             :require-hitl t
+             :llm (%research-llm :questions '("What is KSAR?")
+                                 :gap-once "What is a restart?")))))
+    (ok (eq :pass (getf result :verdict)))
+    (ok (= 2 exec) "second child ran after approval")
+    (ok (= 2 (length (getf result :children))))))
+
+(deftest deep-research-hitl-between-rounds-signals
+  "Without approve, HITL between rounds signals approval-required."
+  (ok (signals
+       (%run-research
+        :task-id "research-hitl-wait"
+        :max-rounds 2
+        :require-hitl t
+        :llm (%research-llm :questions '("What is KSAR?")
+                            :gap-once "What is a restart?"))
+       'approval-required)))
+
+(deftest deep-research-hitl-honors-profile-flag
+  "PROFILE-REQUIRE-HITL-P is enough to arm the between-round checkpoint."
+  (let ((domain (make-expert-domain
+                 :name "hitl-research"
+                 :catalogue (cap:make-catalogue :world)
+                 :profile (make-instance 'personal-profile
+                                         :require-hitl-p t))))
+    (ok (signals
+         (%run-research
+          :domain domain
+          :task-id "research-hitl-profile"
+          :max-rounds 2
+          :llm (%research-llm :questions '("What is KSAR?")
+                              :gap-once "What is a restart?"))
+         'approval-required))))
