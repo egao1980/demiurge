@@ -96,21 +96,59 @@
 (defun make-file-source (&key root (pattern "*") (recursive t))
   (make-instance 'file-source :root root :pattern pattern :recursive recursive))
 
+(defun %name-matches-pattern-p (namestring pattern)
+  (cond
+    ((or (null pattern) (string= pattern "*")) t)
+    ((and (plusp (length pattern)) (char= (char pattern 0) #\*))
+     (let ((suffix (subseq pattern 1)))
+       (and (>= (length namestring) (length suffix))
+            (string= namestring suffix
+                     :start1 (- (length namestring) (length suffix))))))
+    (t (string= namestring pattern))))
+
+(defun %uiop-fallback-files (root pattern recursive)
+  "UIOP walk when pathlib:glob returns nothing (macOS DIRECTORY + **/ is flaky)."
+  (let ((base (uiop:ensure-directory-pathname root))
+        (out '()))
+    (labels ((walk (dir)
+               (dolist (f (ignore-errors (uiop:directory-files dir)))
+                 (when (%name-matches-pattern-p (file-namestring f) pattern)
+                   (push f out)))
+               (when recursive
+                 (dolist (sub (ignore-errors (uiop:subdirectories dir)))
+                   (walk sub)))))
+      (walk base)
+      (nreverse out))))
+
 (defmethod enumerate-items ((source file-source))
   (let* ((root (file-source-root source))
-         (paths (pathlib:glob root (file-source-pattern source)
-                              :recursive (file-source-recursive source))))
+         (pattern (file-source-pattern source))
+         (recursive (file-source-recursive source))
+         (paths (or (pathlib:glob root pattern :recursive recursive)
+                    (%uiop-fallback-files root pattern recursive))))
     (loop for p in paths
-          when (pathlib:file-p p)
+          when (if (pathnamep p)
+                   (uiop:file-exists-p p)
+                   (pathlib:file-p p))
             collect (let* ((ns (%path-string p))
-                           (text (pathlib:read-text p))
-                           (bytes (pathlib:read-bytes p)))
+                           (text (if (pathnamep p)
+                                     (uiop:read-file-string p)
+                                     (pathlib:read-text p)))
+                           (bytes (if (pathnamep p)
+                                      (with-open-file (in p :element-type
+                                                          '(unsigned-byte 8))
+                                        (let ((buf (make-array (file-length in)
+                                                               :element-type
+                                                               '(unsigned-byte 8))))
+                                          (read-sequence buf in)
+                                          buf))
+                                      (pathlib:read-bytes p))))
                       (make-ingest-item
                        :id ns
                        :uri ns
                        :content text
                        :hash (content-hash bytes)
-                       :format (%infer-format ns))))))
+                       :format (%infer-format ns)))))
 
 (defclass imap-source (ingest-source)
   ((client :initarg :client :accessor imap-source-client :initform nil)
