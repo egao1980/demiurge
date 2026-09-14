@@ -153,13 +153,14 @@
     (t value)))
 
 (defun %readable-value (value)
-  "schema:dump :as :plist still embeds hash-tables for nested objects.
-   Those print as #<HASH-TABLE> and cannot be READ back from an OCI blob."
-  (cond
-    ((and (typep value 'standard-object)
-          (schema:schema-class-p (class-of value)))
-     (%readable-value (schema:dump value :as :plist)))
-    (t (%jsonish-to-lisp value))))
+  "PRINT/READ-able keyword plist. schema:dump :as :plist nreverses a list*
+   accumulator and swaps keys/values; nested objects also stay hash-tables
+   (printed as #<HASH-TABLE>). Dump as :hash-table, then keywordize."
+  (%jsonish-to-lisp
+   (if (and (typep value 'standard-object)
+            (schema:schema-class-p (class-of value)))
+       (schema:dump value :as :hash-table)
+       value)))
 
 (defun %manifest-text (manifest)
   (%prin1-string (%readable-value manifest)))

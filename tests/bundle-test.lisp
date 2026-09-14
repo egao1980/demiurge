@@ -26,7 +26,7 @@
                      (uiop:ensure-directory-pathname store-root))))
 
 (deftest packed-manifest-blob-is-readable
-  "schema:dump :as :plist embeds hash-tables; the OCI blob must PRINT/READ."
+  "Packed manifest must PRINT/READ; dump :as :plist swaps keys via nreverse."
   (let* ((m (make-expert-bundle-manifest
              :name "round"
              :version "1.2.3"
@@ -37,10 +37,13 @@
                     :items (list (make-bundle-corpus-item
                                   :uri "a.md" :digest "def"))))))
          (text (demiurge/bundle::%manifest-text m))
-         (parsed (demiurge/bundle::%parse-manifest-plist
-                  (demiurge/bundle::%read-sexp text))))
+         (sexp (demiurge/bundle::%read-sexp text))
+         (parsed (demiurge/bundle::%parse-manifest-plist sexp)))
     (ok (not (search "#<" text))
         "manifest text must not contain unreadable #<HASH-TABLE>")
+    (ok (keywordp (first sexp))
+        "readable plist must start with a keyword key, not a swapped value")
+    (ok (equal "round" (getf sexp :name)))
     (ok (equal "round" (expert-bundle-manifest-name parsed)))
     (ok (equal "1.2.3" (expert-bundle-manifest-version parsed)))
     (ok (equal "1" (bundle-skill-ref-version
