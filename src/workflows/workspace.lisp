@@ -402,6 +402,9 @@ Retrieve with retrieve-research-sources (RAG) or MCP read-resource."
   (or (ignore-errors (llm:backend-model (bare-llm-backend llm)))
       (ignore-errors (llm:backend-model llm))))
 
+(defun %research-elapsed (t0)
+  (/ (- (get-internal-real-time) t0) internal-time-units-per-second))
+
 (defun generate-research-step (llm step user-text &key output workspace instructions)
   "system-turn + user-turn. → llm-response.
    :OUTPUT parse/empty misses retry GENERATE. After *RESEARCH-OUTPUT-ATTEMPTS*
@@ -423,9 +426,7 @@ Retrieve with retrieve-research-sources (RAG) or MCP read-resource."
                          (llm:generate llm turns :output output)
                          (llm:generate llm turns))))
               (research-trace "LLM generate ~s done ~,1fs chars=~d~:[~; structured~]"
-                              step
-                              (/ (- (get-internal-real-time) t0)
-                                 internal-time-units-per-second)
+                              step (%research-elapsed t0)
                               (length (%llm-response-text r))
                               (and output (llm:llm-response-output r)))
               (when (and output
@@ -440,17 +441,14 @@ Retrieve with retrieve-research-sources (RAG) or MCP read-resource."
                                          (%llm-response-text
                                           (llm:llm-output-error-response c))))
             (research-trace "LLM generate ~s output-error ~,1fs attempt ~d chars=~d"
-                            step
-                            (/ (- (get-internal-real-time) t0)
-                               internal-time-units-per-second)
-                            attempts
+                            step (%research-elapsed t0) attempts
                             (length (or last-text "")))
             (when (>= attempts *research-output-attempts*)
               (error 'research-error
                      :message (format nil
                                       "~a structured output failed after ~d attempt~:p~@[; completion: ~s~]"
                                       step attempts
-                                      (and (plusp (length last-text)) last-text)))))))))))
+                                      (and (plusp (length last-text)) last-text))))))))))
 
 (defun %domain-expert-instructions (domain)
   (when (expert-domain-p domain)
