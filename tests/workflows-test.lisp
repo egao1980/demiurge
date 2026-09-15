@@ -454,6 +454,21 @@
       (ok (plusp (length hits)))
       (ok (equal "improve.md" (getf (first hits) :rel))))))
 
+(deftest search-research-tree-ignores-prompt-boilerplate
+  (with-tmp-dir (root)
+    (%write-tree-file root "src/improve/cycle.lisp"
+                      "(defun no-critical-regression-gate () t)")
+    (%write-tree-file root "queries.md"
+                      (concatenate
+                       'string
+                       "Search workspace:// for no-critical-regression-gate. "
+                       "Quote the defining file and function; do not expand acronyms."))
+    (let ((hits (search-research-tree
+                 root
+                 "Search workspace:// for no-critical-regression-gate. Quote the defining file.")))
+      (ok (plusp (length hits)))
+      (ok (equal "src/improve/cycle.lisp" (getf (first hits) :rel))))))
+
 (deftest retrieve-research-sources-ranks-gate-identifier
   (let ((ws (make-research-workspace :name "rank")))
     (record-research-source
@@ -467,6 +482,33 @@
     (let ((hits (retrieve-research-sources ws "no-critical-regression-gate" :top-k 2)))
       (ok (plusp (length hits)))
       (ok (equal "gate" (getf (first hits) :id))))))
+
+(deftest retrieve-research-sources-ignores-prompt-boilerplate
+  "seed-ws prompt text must not let queries.md beat cycle.lisp / cl-stack.md."
+  (let ((ws (make-research-workspace :name "rank-prompt"))
+        (q (concatenate
+            'string
+            "Search workspace:// for cl-stack, self-reflection, "
+            "no-critical-regression-gate, gap-analysis. "
+            "Quote the defining file and function; do not expand acronyms.")))
+    (record-research-source
+     ws :id "cycle" :uri "workspace://src/improve/cycle.lisp" :title "cycle.lisp"
+     :text "(defun no-critical-regression-gate () (eval:make-default-promotion-gate))"
+     :kind :workspace)
+    (record-research-source
+     ws :id "corpus" :uri "workspace://examples/corpus/cl-stack.md" :title "cl-stack.md"
+     :text "The promotion gate is no-critical-regression-gate composed with mean-improvement-gate."
+     :kind :workspace)
+    (record-research-source
+     ws :id "queries" :uri "workspace://demos/deep-research/queries.md" :title "queries.md"
+     :text q
+     :kind :workspace)
+    (let* ((hits (retrieve-research-sources ws q :top-k 3))
+           (ids (mapcar (lambda (h) (getf h :id)) hits)))
+      (ok (plusp (length hits)))
+      (ok (find "cycle" ids :test #'equal))
+      (ok (not (equal "queries" (getf (first hits) :id)))
+          "boilerplate echo must not rank first"))))
 
 (deftest workspace-symbol-map-extracts-gate
   (with-tmp-dir (root)

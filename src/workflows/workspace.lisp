@@ -362,27 +362,59 @@ Retrieve with retrieve-research-sources (RAG) or MCP read-resource."
     (%flush-sources-to-board ws)
     rec))
 
+(defun %query-score-tokens (query)
+  "Tokens used for ranking. Identifier queries ignore prompt boilerplate
+   (Search workspace:// / Quote the defining file…) so queries.md cannot
+   outrank cycle.lisp just by repeating the question."
+  (let* ((toks (remove-duplicates (%tokenize query) :test #'string=))
+         (idents (remove-if-not #'%identifier-token-p toks)))
+    (if idents idents toks)))
+
 (defun %lexical-score (query text)
-  (let* ((q (remove-duplicates (%tokenize query) :test #'string=))
+  (let* ((q (%query-score-tokens query))
          (hay (string-downcase (or text "")))
          (n (length q)))
     (if (zerop n)
         0.0
         (/ (count-if (lambda (tok) (search tok hay)) q) (float n)))))
 
+(defun %source-path-boost (uri)
+  "Prefer defining sources over demo/query echo files."
+  (let ((u (string-downcase (or uri ""))))
+    (cond
+      ((or (search "queries.md" u) (search "/demos/" u)
+           (search "/recordings/" u))
+       -3.0)
+      ((search "src/improve/" u) 3.0)
+      ((search "corpus/cl-stack" u) 2.5)
+      ((search ".lisp" u) 1.0)
+      (t 0.0))))
+
+(defun %query-echo-p (query text)
+  "T when TEXT embeds the whole prompt sentence (queries.md), not a lone identifier."
+  (let ((q (string-downcase (string-trim '(#\Space #\Tab #\Newline) (or query ""))))
+        (hay (string-downcase (or text ""))))
+    (and (> (length q) 40)
+         (find #\Space q :test #'char=)
+         (search q hay))))
+
 (defun %retrieve-score (query rec)
-  "Lexical + identifier boost; store cosine is a weak tie-break (32-d BoW)."
+  "Lexical + identifier boost; store cosine is a weak tie-break (32-d BoW).
+   Demo query files that echo the prompt lose to src/improve + corpus."
   (let* ((text (or (getf rec :text) (getf rec :chunk-text) ""))
          (uri (or (getf rec :uri) (getf rec :title) ""))
          (hay (string-downcase (format nil "~a~%~a" uri text)))
+         (toks (%query-score-tokens query))
          (lex (%lexical-score query hay))
          (store (let ((s (getf rec :score)))
                   (if (numberp s) (* 0.1 s) 0.0)))
-         (ident 0.0))
-    (dolist (tok (remove-duplicates (%tokenize query) :test #'string=))
+         (ident 0.0)
+         (path-boost (%source-path-boost uri))
+         (echo (if (%query-echo-p query text) -4.0 0.0)))
+    (dolist (tok toks)
       (when (and (%identifier-token-p tok) (search tok hay))
         (incf ident 2.0)))
-    (+ lex ident store)))
+    (+ lex ident store path-boost echo)))
 
 (defun retrieve-research-sources (ws query &key (top-k 4))
   "Retrieve over workspace sources via rag-query (text + BoW). Identifier-aware rerank."

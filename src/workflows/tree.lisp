@@ -196,9 +196,10 @@
                 "")))))))))
 
 (defun %tree-file-score (query rel text)
-  "Token-fraction plus identifier/path boost so hyphenated symbols beat boilerplate."
+  "Token-fraction plus identifier/path boost so hyphenated symbols beat boilerplate.
+   Identifier queries rank on those tokens only (see %QUERY-SCORE-TOKENS)."
   (let* ((hay (string-downcase (format nil "~a~%~a" rel (or text ""))))
-         (toks (remove-duplicates (%tokenize query) :test #'string=)))
+         (toks (%query-score-tokens query)))
     (if (null toks)
         0.0
         (let ((hits 0)
@@ -209,13 +210,9 @@
               (when (%identifier-token-p tok)
                 (incf ident-hits))))
           (let ((frac (/ (float hits) (length toks)))
-                (path-boost (if (some (lambda (q)
-                                        (and (plusp (length q))
-                                             (search q (string-downcase rel))))
-                                      toks)
-                                0.15
-                                0.0)))
-            (+ frac (* 2.0 ident-hits) path-boost))))))
+                (path-boost (%source-path-boost rel))
+                (echo (if (%query-echo-p query text) -4.0 0.0)))
+            (+ frac (* 2.0 ident-hits) path-boost echo))))))
 
 (defun %rank-tree-hits (hits top-k)
   (subseq (sort hits #'> :key (lambda (e) (getf e :score)))

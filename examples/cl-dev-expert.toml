@@ -12,6 +12,10 @@ kind = "personal"
 [llm]
 default-model = "mock"
 
+[workspace]
+root = "../../"
+seed = "KSAR blackboard no-critical-regression-gate gap-analysis improve cycle demiurge"
+
 [[corpus]]
 kind = "file"
 spec = "corpus"
