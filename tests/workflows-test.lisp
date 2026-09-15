@@ -529,7 +529,7 @@
 (deftest workspace-symbol-map-extracts-gate
   (with-tmp-dir (root)
     (%write-tree-file root "src/improve/cycle.lisp"
-                      (format nil "(defun default-improve-gate ()~%  (eval:make-default-promotion-gate))~%;; no-critical-regression-gate composed with mean-improvement-gate~%"))))
+                      (format nil "(defun default-improve-gate ()~%  (eval:make-default-promotion-gate))~%;; no-critical-regression-gate composed with mean-improvement-gate~%"))
     (let ((map (workspace-symbol-map
                 :root root :focus '("src/improve/cycle.lisp"))))
       (ok (search "no-critical-regression-gate" map))
