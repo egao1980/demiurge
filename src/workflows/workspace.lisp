@@ -518,8 +518,8 @@ Retrieve with retrieve-research-sources (RAG) or MCP read-resource."
 
 (defun generate-research-step (llm step user-text &key output workspace instructions)
   "system-turn + user-turn. → llm-response.
-   :OUTPUT parse/empty misses retry GENERATE. After *RESEARCH-OUTPUT-ATTEMPTS*
-   the run dies with RESEARCH-ERROR carrying the raw completion. No IGNORE-OUTPUT."
+   :OUTPUT parse misses retry GENERATE. After *RESEARCH-OUTPUT-ATTEMPTS*
+   a nonempty completion is returned (COERCE-RESEARCH-PLAN). Empty dies."
   (let* ((sys (research-instruction (or workspace instructions) step))
          (turns (list (llm:system-turn sys)
                       (llm:user-turn (or user-text ""))))
@@ -548,18 +548,24 @@ Retrieve with retrieve-research-sources (RAG) or MCP read-resource."
                        :message (format nil "~a returned an empty completion" step)))
               (return r))
           (llm:llm-output-error (c)
-            (setf last-text (string-trim '(#\Space #\Tab #\Newline #\Return)
-                                         (%llm-response-text
-                                          (llm:llm-output-error-response c))))
-            (research-trace "LLM generate ~s output-error ~,1fs attempt ~d chars=~d"
-                            step (%research-elapsed t0) attempts
-                            (length (or last-text "")))
-            (when (>= attempts *research-output-attempts*)
-              (error 'research-error
-                     :message (format nil
-                                      "~a structured output failed after ~d attempt~:p~@[; completion: ~s~]"
-                                      step attempts
-                                      (and (plusp (length last-text)) last-text))))))))))
+            (let ((resp (llm:llm-output-error-response c)))
+              (setf last-text (string-trim '(#\Space #\Tab #\Newline #\Return)
+                                           (%llm-response-text resp)))
+              (research-trace "LLM generate ~s output-error ~,1fs attempt ~d chars=~d"
+                              step (%research-elapsed t0) attempts
+                              (length (or last-text "")))
+              (when (>= attempts *research-output-attempts*)
+                ;; W2 :repair already returns text; :signal / 0.3.0 still
+                ;; errors. Nonempty completion → coerce-research-plan.
+                (when (plusp (length last-text))
+                  (return (or resp
+                              (llm:make-llm-response
+                               :parts (list (llm:make-llm-text-part
+                                             :text last-text))))))
+                (error 'research-error
+                       :message (format nil
+                                        "~a structured output failed after ~d attempt~:p"
+                                        step attempts)))))))))))
 
 (defun %domain-expert-instructions (domain)
   (when (expert-domain-p domain)

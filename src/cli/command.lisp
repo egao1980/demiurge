@@ -341,8 +341,8 @@
       (values text fid board))))
 
 (defun %call-research (domain topic &rest keys)
-  "Call RUN-DEEP-RESEARCH. Plan/gap output errors retry then fail;
-   they are not ignored."
+  "Call RUN-DEEP-RESEARCH. Plan/gap parse misses retry; nonempty
+   completion falls back to COERCE-RESEARCH-PLAN. Empty dies."
   (apply #'wf:run-deep-research domain topic keys))
 
 (defun cmd-research (opts free)

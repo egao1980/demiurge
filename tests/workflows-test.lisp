@@ -126,16 +126,17 @@
   (let ((schema (llm:structured-output-json-schema 'research-plan)))
     (ok (hash-table-p schema))))
 
-(deftest generate-research-step-retries-then-dies-with-completion
-  "Invalid JSON retries, then RESEARCH-ERROR includes the raw completion."
+(deftest generate-research-step-retries-then-dies-on-empty
+  "Empty structured-output completion retries, then RESEARCH-ERROR."
   (let* ((*research-output-attempts* 2)
+         (llm:*structured-output-repair* :signal)
          (n 0)
          (bare (llm:make-mock-llm-backend
                 :handler (lambda (backend turns &key &allow-other-keys)
                            (declare (ignore backend turns))
                            (incf n)
                            (llm:make-llm-response
-                            :parts (list (llm:make-llm-text-part :text "not-json"))))))
+                            :parts (list (llm:make-llm-text-part :text ""))))))
          (llm (wrap-llm-observe bare :expert "t" :scope "t")))
     (handler-case
         (progn
@@ -143,9 +144,31 @@
                                   :output 'research-plan)
           (ok nil "expected research-error"))
       (research-error (e)
-        (ok (search "not-json" (or (demiurge-error-message e) "")))
-        (ok (search "2" (or (demiurge-error-message e) "")))))
-    (ok (= 2 n))))
+        (let ((msg (string-downcase (or (demiurge-error-message e) ""))))
+          (ok (or (search "failed" msg) (search "empty" msg))))))
+    (ok (plusp n))))
+
+(deftest generate-research-step-invalid-json-falls-back
+  "Invalid JSON with a nonempty completion is returned for COERCE-RESEARCH-PLAN."
+  (let* ((*research-output-attempts* 2)
+         (llm:*structured-output-repair* :signal)
+         (n 0)
+         (bare (llm:make-mock-llm-backend
+                :handler (lambda (backend turns &key &allow-other-keys)
+                           (declare (ignore backend turns))
+                           (incf n)
+                           (llm:make-llm-response
+                            :parts (list (llm:make-llm-text-part :text "not-json"))))))
+         (llm (wrap-llm-observe bare :expert "t" :scope "t"))
+         (r (generate-research-step llm :plan "CL expert systems"
+                                    :output 'research-plan)))
+    (ok (= 2 n))
+    (ok (llm:llm-response-p r))
+    (ok (null (llm:llm-response-output r)))
+    (ok (search "not-json" (or (llm:llm-response-text r) "")))
+    (ok (research-plan-p (coerce-research-plan
+                          (llm:llm-response-text r)
+                          :question "CL expert systems")))))
 
 (deftest generate-research-step-traces-llm
   "Live demo needs these lines flushed before GENERATE blocks on HTTP."
