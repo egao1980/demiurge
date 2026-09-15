@@ -112,6 +112,10 @@
    #:ingest-workspace-hits
    #:seed-research-workspace
    #:workspace-seed-from-domain
+   #:workspace-local-query-p
+   #:ensure-research-tree-index
+   #:workspace-symbol-map
+   #:research-workspace-tree-index
 
    #:report-workflow-progress
    #:sync-workflow-wire

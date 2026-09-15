@@ -71,10 +71,44 @@ Use lookup-symbol / search-corpus when those tools exist. Cite src-ids. Do not g
                :initform *default-research-clip-chars*)
    (tree-root :initarg :tree-root :accessor research-workspace-tree-root
               :initform nil)
+   (tree-index :initarg :tree-index :accessor research-workspace-tree-index
+               :initform nil)
    (source-counter :initform 0 :accessor research-workspace-source-counter)))
 
 (defun research-workspace-p (x)
   (typep x 'research-workspace))
+
+(defun %try-load-hybrid ()
+  (or (find-package '#:rag-backend-hybrid)
+      (ignore-errors (asdf:load-system "rag-backend-hybrid" :verbose nil)
+                     (find-package '#:rag-backend-hybrid))))
+
+(defclass code-analyzer (rag:rag-analyzer)
+  ()
+  (:documentation "Hyphen-keeping analyzer. No English stopwords (they drop NO)."))
+
+(defmethod rag:analyze ((analyzer code-analyzer) text)
+  (declare (ignore analyzer))
+  (%tokenize (or text "")))
+
+(defun %hybrid-class ()
+  (let ((pkg (find-package '#:rag-backend-hybrid)))
+    (and pkg (let ((s (find-symbol "HYBRID-STORE" pkg)))
+               (and s (find-class s nil))))))
+
+(defun %maybe-wrap-hybrid (store)
+  (cond
+    ((null store) store)
+    ((not (%try-load-hybrid)) store)
+    ((let ((cls (%hybrid-class)))
+       (and cls (typep store cls)))
+     store)
+    (t
+     (let ((make (find-symbol "MAKE-HYBRID-STORE" "RAG-BACKEND-HYBRID")))
+       (if (and make (fboundp make))
+           (funcall make :vector-store store
+                    :analyzer (make-instance 'code-analyzer))
+           store)))))
 
 (defun research-instruction (source step)
   "SOURCE is a research-workspace or an instructions plist."
@@ -101,13 +135,35 @@ Use lookup-symbol / search-corpus when those tools exist. Cite src-ids. Do not g
   (format nil "research://instructions/~a"
           (string-downcase (string step))))
 
-(defun %tokenize (text)
+(defun %identifier-char-p (char)
+  (or (alphanumericp char)
+      (find char "-_/" :test #'char=)))
+
+(defun %identifier-token-p (token)
+  (and (stringp token)
+       (> (length token) 3)
+       (find-if (lambda (c) (find c "-_/")) token)))
+
+(defun %split-alnum (text)
   (loop for start = 0 then (1+ pos)
         for pos = (position-if-not #'alphanumericp text :start start)
         for raw = (string-downcase
                    (if pos (subseq text start pos) (subseq text start)))
         when (plusp (length raw)) collect raw
         while pos))
+
+(defun %tokenize (text)
+  "Lowercase tokens. Hyphen/`_`/`/` identifiers stay intact and also split."
+  (let ((s (or text "")))
+    (loop for start = 0 then (1+ pos)
+          for pos = (position-if-not #'%identifier-char-p s :start start)
+          for raw = (string-downcase
+                     (if pos (subseq s start pos) (subseq s start)))
+          when (plusp (length raw))
+            nconc (if (%identifier-token-p raw)
+                      (cons raw (%split-alnum raw))
+                      (list raw))
+          while pos)))
 
 (defun %bow-embed (text &optional (dim *research-embed-dim*))
   (let ((v (make-array dim :element-type 'single-float :initial-element 0.0f0)))
@@ -314,14 +370,29 @@ Retrieve with retrieve-research-sources (RAG) or MCP read-resource."
         0.0
         (/ (count-if (lambda (tok) (search tok hay)) q) (float n)))))
 
+(defun %retrieve-score (query rec)
+  "Lexical + identifier boost; store cosine is a weak tie-break (32-d BoW)."
+  (let* ((text (or (getf rec :text) (getf rec :chunk-text) ""))
+         (uri (or (getf rec :uri) (getf rec :title) ""))
+         (hay (string-downcase (format nil "~a~%~a" uri text)))
+         (lex (%lexical-score query hay))
+         (store (let ((s (getf rec :score)))
+                  (if (numberp s) (* 0.1 s) 0.0)))
+         (ident 0.0))
+    (dolist (tok (remove-duplicates (%tokenize query) :test #'string=))
+      (when (and (%identifier-token-p tok) (search tok hay))
+        (incf ident 2.0)))
+    (+ lex ident store)))
+
 (defun retrieve-research-sources (ws query &key (top-k 4))
-  "RAG-style retrieve over workspace sources. Cosine on bag-of-words, lexical fallback."
+  "Retrieve over workspace sources via rag-query (text + BoW). Identifier-aware rerank."
   (check-type ws research-workspace)
   (let* ((k (or top-k 4))
          (store (research-workspace-store ws))
+         (rq (rag:make-rag-query :text query :embedding (%bow-embed query)))
          (hits (when store
                  (ignore-errors
-                   (rag:query-store store (%bow-embed query) :top-k k))))
+                   (rag:query-store store rq :top-k (max k 8)))))
          (from-store
           (loop for hit in (or hits nil)
                 for chunk = (and (rag:rag-hit-p hit) (rag:rag-hit-chunk hit))
@@ -332,13 +403,11 @@ Retrieve with retrieve-research-sources (RAG) or MCP read-resource."
                                 :test #'equal)
                 when rec
                   collect (append rec (list :score (rag:rag-hit-score hit)
-                                            :chunk-text (rag:rag-chunk-text chunk))))))
-    (if from-store
-        from-store
-        (let ((ranked (sort (copy-list (research-workspace-sources ws)) #'>
-                            :key (lambda (s)
-                                   (%lexical-score query (getf s :text))))))
-          (subseq ranked 0 (min k (length ranked)))))))
+                                            :chunk-text (rag:rag-chunk-text chunk)))))
+         (candidates (or from-store (copy-list (research-workspace-sources ws))))
+         (ranked (sort (copy-list candidates) #'>
+                       :key (lambda (s) (%retrieve-score query s)))))
+    (subseq ranked 0 (min k (length ranked)))))
 
 (defun list-research-resources (ws)
   "MCP list-resources when a server is bound; otherwise a plist catalog."

@@ -18,6 +18,9 @@
 (defparameter *default-tree-max-bytes* 200000)
 (defparameter *default-tree-preview-chars* 8000)
 
+(defstruct (tree-file-entry (:conc-name tfe-))
+  rel path mtime size text preview)
+
 (defun %env-nonempty (name)
   (let ((v (uiop:getenv name)))
     (and v (plusp (length v)) v)))
@@ -193,27 +196,59 @@
                 "")))))))))
 
 (defun %tree-file-score (query rel text)
+  "Token-fraction plus identifier/path boost so hyphenated symbols beat boilerplate."
   (let* ((hay (string-downcase (format nil "~a~%~a" rel (or text ""))))
          (toks (remove-duplicates (%tokenize query) :test #'string=)))
     (if (null toks)
         0.0
-        (/ (count-if (lambda (tok) (search tok hay)) toks)
-           (float (length toks))))))
+        (let ((hits 0)
+              (ident-hits 0))
+          (dolist (tok toks)
+            (when (search tok hay)
+              (incf hits)
+              (when (%identifier-token-p tok)
+                (incf ident-hits))))
+          (let ((frac (/ (float hits) (length toks)))
+                (path-boost (if (some (lambda (q)
+                                        (and (plusp (length q))
+                                             (search q (string-downcase rel))))
+                                      toks)
+                                0.15
+                                0.0)))
+            (+ frac (* 2.0 ident-hits) path-boost))))))
+
+(defun %rank-tree-hits (hits top-k)
+  (subseq (sort hits #'> :key (lambda (e) (getf e :score)))
+          0 (min top-k (length hits))))
 
 (defun search-research-tree (root query &key (top-k 4)
-                                        (max-files *default-tree-max-files*))
-  "Top-K relative paths under ROOT scored against QUERY (path + preview)."
-  (let ((ranked
-         (loop for rel in (list-research-tree-files root :max-files max-files)
-               for preview = (let ((s (read-research-tree-file root rel)))
-                               (if (<= (length s) *default-tree-preview-chars*)
-                                   s
-                                   (subseq s 0 *default-tree-preview-chars*)))
-               for score = (%tree-file-score query rel preview)
-               when (> score 0.0)
-                 collect (list :rel rel :score score :preview preview))))
-    (subseq (sort ranked #'> :key (lambda (e) (getf e :score)))
-            0 (min top-k (length ranked)))))
+                                        (max-files *default-tree-max-files*)
+                                        workspace)
+  "Top-K relative paths under ROOT scored against QUERY (path + preview).
+   When WORKSPACE has a tree-index, score the cache instead of re-walking."
+  (let ((index (and workspace (research-workspace-tree-index workspace))))
+    (if index
+        (%rank-tree-hits
+         (let ((ranked '()))
+           (maphash (lambda (rel entry)
+                      (let ((score (%tree-file-score query rel (tfe-preview entry))))
+                        (when (> score 0.0)
+                          (push (list :rel rel :score score
+                                      :preview (tfe-preview entry))
+                                ranked))))
+                    index)
+           ranked)
+         top-k)
+        (let ((ranked
+               (loop for rel in (list-research-tree-files root :max-files max-files)
+                     for preview = (let ((s (read-research-tree-file root rel)))
+                                     (if (<= (length s) *default-tree-preview-chars*)
+                                         s
+                                         (subseq s 0 *default-tree-preview-chars*)))
+                     for score = (%tree-file-score query rel preview)
+                     when (> score 0.0)
+                       collect (list :rel rel :score score :preview preview))))
+          (%rank-tree-hits ranked top-k)))))
 
 (defun workspace-catalog-text (ws)
   (let ((root (research-tree-root ws)))
@@ -229,13 +264,18 @@
          (raw (and cfg (demiurge-config-workspace-seed cfg))))
     (and raw (plusp (length (string raw))) (string raw))))
 
+(defun %source-uri (rec)
+  (getf rec :uri))
+
 (defun seed-research-workspace (ws &key query seed (top-k 6))
-  "Ingest checkout hits for SEED then QUERY so children see workspace:// sources."
+  "Symbol-map + focus files, then checkout hits for SEED then QUERY."
   (unless (research-tree-root ws)
     (return-from seed-research-workspace nil))
+  (ensure-research-tree-index ws)
   (let ((terms (remove-if (lambda (s) (or (null s) (zerop (length (string s)))))
                           (list seed query)))
-        (out '()))
+        (out (append (or (ignore-errors (%ingest-symbol-map ws)) '())
+                     (or (ignore-errors (%ingest-focus-files ws)) '()))))
     (dolist (term terms)
       (research-trace "workspace seed ~s" term)
       (setf out (append out
@@ -248,23 +288,35 @@
     out))
 
 (defun ingest-workspace-hits (ws query &key (top-k 4) subquestion)
-  "Search the tree and record-research-source each hit as :workspace."
+  "Search the (cached) tree and record-research-source each new URI as :workspace."
   (let ((root (research-tree-root ws)))
     (unless root
       (return-from ingest-workspace-hits nil))
+    (ensure-research-tree-index ws :root root)
     (research-trace "workspace walk ~a" (pathlib:as-posix root))
-    (loop for hit in (search-research-tree root query :top-k top-k)
-          for rel = (getf hit :rel)
-          for text = (or (read-research-tree-file root rel) "")
-          for n from 1
-          collect (record-research-source
+    (let ((index (research-workspace-tree-index ws))
+          (n 0)
+          (out '()))
+      (dolist (hit (search-research-tree root query :top-k top-k :workspace ws))
+        (let* ((rel (getf hit :rel))
+               (uri (workspace-resource-uri rel))
+               (entry (and index (gethash rel index)))
+               (text (or (and entry (tfe-text entry))
+                         (read-research-tree-file root rel)
+                         "")))
+          (unless (find uri (research-workspace-sources ws)
+                        :key #'%source-uri :test #'string=)
+            (incf n)
+            (push (record-research-source
                    ws
                    :id (format nil "ws-~a-~d" (or subquestion "src") n)
-                   :uri (workspace-resource-uri rel)
+                   :uri uri
                    :title rel
                    :text text
                    :subquestion subquestion
-                   :kind :workspace))))
+                   :kind :workspace)
+                  out))))
+      (nreverse out))))
 
 (defun %register-workspace-resources (ws server)
   (mcp:register-resource
@@ -326,7 +378,9 @@
 (defun make-research-workspace (&key name board store instructions domain
                                   clip-chars mcp tree-root)
   (let* ((board (or board (bb:make-blackboard)))
-         (store (or store (rag:make-mock-vector-store :dimension *research-embed-dim*)))
+         (store (%maybe-wrap-hybrid
+                 (or store (rag:make-mock-vector-store
+                            :dimension *research-embed-dim*))))
          (merged (merge-research-instructions instructions))
          (expert (%domain-expert-instructions domain))
          (root (or (and tree-root (%existing-dir-pathname tree-root))

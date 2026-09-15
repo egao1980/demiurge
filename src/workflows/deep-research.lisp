@@ -246,8 +246,15 @@
            (hits (progn
                    (research-trace "workspace ingest ~a hits=~d"
                                    id (length (or workspace-hits '())))
-                   (research-trace "websearch ~s" question)
-                   (ignore-errors (web:search-web websearch question :count 5))))
+                   (if (workspace-local-query-p question)
+                       (progn
+                         (research-trace "websearch skip ~s (workspace-local)"
+                                         question)
+                         nil)
+                       (progn
+                         (research-trace "websearch ~s" question)
+                         (ignore-errors
+                           (web:search-web websearch question :count 5))))))
            (web-hits (mapcar #'%hit-plist (or hits nil)))
            (recorded (progn
                        (research-trace "websearch ~s hits=~d"

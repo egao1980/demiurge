@@ -431,3 +431,93 @@
       (ok (plusp (length hits)))
       (ok (find :workspace (research-workspace-sources ws)
                 :key (lambda (s) (getf s :kind)))))))
+
+(deftest tokenize-keeps-hyphenated-identifiers
+  (let ((toks (wf::%tokenize "uses no-critical-regression-gate.")))
+    (ok (member "no-critical-regression-gate" toks :test #'string=))
+    (ok (member "regression" toks :test #'string=))))
+
+(deftest workspace-local-query-p-smoke
+  (ok (workspace-local-query-p "workspace://src/improve/cycle.lisp"))
+  (ok (workspace-local-query-p "search workspace:// for no-critical-regression-gate"))
+  (ng (workspace-local-query-p "What is KSAR in the literature?")))
+
+(deftest search-research-tree-ranks-identifier-hits
+  "Exact gate token beats a file that only mentions workspace/files."
+  (with-tmp-dir (root)
+    (%write-tree-file root "improve.md"
+                      "The improve cycle uses no-critical-regression-gate.")
+    (%write-tree-file root "readme.md"
+                      "what files exist in the workspace checkout tree")
+    (let ((hits (search-research-tree
+                 root "workspace:// no-critical-regression-gate")))
+      (ok (plusp (length hits)))
+      (ok (equal "improve.md" (getf (first hits) :rel))))))
+
+(deftest retrieve-research-sources-ranks-gate-identifier
+  (let ((ws (make-research-workspace :name "rank")))
+    (record-research-source
+     ws :id "gate" :uri "workspace://improve.md" :title "improve.md"
+     :text "The improve cycle uses no-critical-regression-gate."
+     :kind :workspace)
+    (record-research-source
+     ws :id "noise" :uri "workspace://readme.md" :title "readme.md"
+     :text "what files exist in the workspace checkout tree"
+     :kind :workspace)
+    (let ((hits (retrieve-research-sources ws "no-critical-regression-gate" :top-k 2)))
+      (ok (plusp (length hits)))
+      (ok (equal "gate" (getf (first hits) :id))))))
+
+(deftest workspace-symbol-map-extracts-gate
+  (with-tmp-dir (root)
+    (%write-tree-file root "src/improve/cycle.lisp"
+                      (format nil "~
+(defun default-improve-gate ()
+  (eval:make-default-promotion-gate))
+;; no-critical-regression-gate composed with mean-improvement-gate~%"))
+    (let ((map (workspace-symbol-map
+                :root root :focus '("src/improve/cycle.lisp"))))
+      (ok (search "no-critical-regression-gate" map))
+      (ok (search "default-improve-gate" map)))))
+
+(deftest seed-research-workspace-records-symbol-map
+  (with-tmp-dir (root)
+    (%write-tree-file root "examples/corpus/cl-stack.md"
+                      "The self-improvement promotion gate is no-critical-regression-gate.")
+    (let* ((ws (make-research-workspace :name "map-seed" :tree-root root))
+           (hits (seed-research-workspace
+                  ws :seed "no-critical-regression-gate")))
+      (ok (plusp (length hits)))
+      (ok (find "workspace://.symbol-map" (research-workspace-sources ws)
+                :key (lambda (s) (getf s :uri)) :test #'equal))
+      (ok (search "no-critical-regression-gate"
+                  (getf (find "workspace://.symbol-map"
+                              (research-workspace-sources ws)
+                              :key (lambda (s) (getf s :uri)) :test #'equal)
+                        :text))))))
+
+(deftest research-one-subquestion-skips-workspace-websearch
+  (with-tmp-dir (root)
+    (%write-tree-file root "improve.md"
+                      "The improve cycle uses no-critical-regression-gate.")
+    (let* ((ws (make-research-workspace :name "skip-web" :tree-root root))
+           (out (wf::research-one-subquestion
+                 (list :id "s1"
+                       :question "workspace:// no-critical-regression-gate")
+                 :llm (%research-llm)
+                 :websearch (%research-websearch)
+                 :workspace ws)))
+      (ok (null (getf out :web-hits)))
+      (ok (find :workspace (research-workspace-sources ws)
+                :key (lambda (s) (getf s :kind)))))))
+
+(deftest ensure-research-tree-index-reuses-mtime
+  (with-tmp-dir (root)
+    (%write-tree-file root "a.md" "alpha KSAR")
+    (let ((ws (make-research-workspace :name "idx" :tree-root root)))
+      (ensure-research-tree-index ws)
+      (let ((first (research-workspace-tree-index ws)))
+        (ok (plusp (hash-table-count first)))
+        (ensure-research-tree-index ws)
+        (ok (eq (gethash "a.md" first)
+                (gethash "a.md" (research-workspace-tree-index ws))))))))

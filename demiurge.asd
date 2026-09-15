@@ -159,6 +159,7 @@
                (:file "project")
                (:file "workspace")
                (:file "tree")
+               (:file "index")
                (:file "deep-research")))
 
 (defsystem "demiurge/bundle"
@@ -223,6 +224,7 @@
                "crypto-backend-ironclad"
                "json-backend-jzon"
                "toml-backend-tomlet"
+               "rag-backend-hybrid"
                "rove")
   :pathname "tests"
   :serial t
