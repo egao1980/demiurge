@@ -555,17 +555,15 @@ Retrieve with retrieve-research-sources (RAG) or MCP read-resource."
                               step (%research-elapsed t0) attempts
                               (length (or last-text "")))
               (when (>= attempts *research-output-attempts*)
-                ;; W2 :repair already returns text; :signal / 0.3.0 still
-                ;; errors. Nonempty completion → coerce-research-plan.
-                (when (plusp (length last-text))
-                  (return (or resp
-                              (llm:make-llm-response
-                               :parts (list (llm:make-llm-text-part
-                                             :text last-text))))))
-                (error 'research-error
-                       :message (format nil
-                                        "~a structured output failed after ~d attempt~:p"
-                                        step attempts)))))))))))
+                (if (plusp (length last-text))
+                    (return (or resp
+                                (llm:make-llm-response
+                                 :parts (list (llm:make-llm-text-part
+                                               :text last-text)))))
+                    (error 'research-error
+                           :message (format nil
+                                            "~a structured output failed after ~d attempt~:p"
+                                            step attempts)))))))))))
 
 (defun %domain-expert-instructions (domain)
   (when (expert-domain-p domain)
