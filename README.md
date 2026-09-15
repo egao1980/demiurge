@@ -34,7 +34,16 @@ Product core for [cl-stack](https://github.com/egao1980/cl-stack) expert systems
 
 **Corporate profile:** `(make-corporate-profile &key data-dir)` — OIDC login (`cl-stack-oauth2` + `cl-stack-jwt`) on the Clack app (session cookie = subject + tenant; `/healthz` and `/readyz` stay open); LDAP group → role → filtered capability catalogue (`capability-denied` on invoke, never mutate the root); `*tenant*` threaded into session / journal / corpus / budget ids (`tenant-isolation-error` on a cross-tenant reference); Postgres when `corporate.postgres.dsn` is set (sessions, journal, pgvector + hybrid), otherwise sqlite/memory; local `SELECT … FOR UPDATE SKIP LOCKED` claim helper; `sql-migrate` revisions per tenant schema when that system loads; `apply-corporate-observability` with `otlp.endpoint`. Compose: `ops/docker-compose.corporate.yml` (pgvector, optional LDAP/Keycloak; reuse `ops/docker-compose.observability.yml` for the collector).
 
-**Serve** (`demiurge/serve`): `(make-expert-app domain profile)` is a Clack dispatcher (AG-UI POST→SSE, `/feedback`, `/healthz`, `/readyz`). `/readyz` mounts `demiurge/observe` when that system is loaded and the profile has stores; otherwise the stub (`*readyz-fn*` / `domain-ready-p`). `(serve-expert domain &key transports)` starts stdio-MCP and/or HTTP. Feedback (`demiurge.feedback` / MCP `record_feedback`) calls `eval-protocol:add-case` with `:source :human-feedback`.
+**Serve** (`demiurge/serve`): `(make-expert-app domain profile)` is a Clack dispatcher (AG-UI POST→SSE, `/feedback`, `/healthz`, `/readyz`). `/readyz` mounts `demiurge/observe` when that system is loaded and the profile has stores; otherwise the stub (`*readyz-fn*` / `domain-ready-p`). `(serve-expert domain &key transports)` starts stdio-MCP and/or HTTP. When `[workspace] root` (or `DEMIURGE_WORKSPACE` / `CL_WORKSPACE`) is set, the MCP server also mounts `workspace://` plus `search_workspace` / `read_workspace` (pathlib jail). Feedback (`demiurge.feedback` / MCP `record_feedback`) calls `eval-protocol:add-case` with `:source :human-feedback`.
+
+**Flagship — point an IDE at this checkout:**
+
+```bash
+# from the demiurge checkout (or demiurge-plan-vectors worktree)
+sbcl --load scripts/demiurge.lisp -- serve --config examples/cl-dev-expert.toml --transport mcp
+```
+
+Cursor / Claude snippet: `examples/cursor-mcp.json`. Tools: `ask_expert`, `search_workspace`, `read_workspace`, `record_feedback`. Resources: `workspace://` and `workspace://<relpath>`. The cl-dev expert.toml `[workspace] root = "../../"` is the dogfood path from this nested worktree; set `DEMIURGE_WORKSPACE` when the checkout sits elsewhere.
 
 **Ingest** (`demiurge/ingest`): `(run-ingest domain source &key store)` is a durable task. `file-source` (pathlib glob), `imap-source`, `s3-source` enumerate items with a content-hash idempotency key; extract → `chunk-extracted-document` / `block-tree-chunker` → embed/upsert; mark-and-sweep drops hashes the source no longer lists.
 

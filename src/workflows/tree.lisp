@@ -397,3 +397,100 @@
                     :tree-root root
                     :mcp mcp)
      :mcp mcp)))
+
+(defun %mcp-arg (table &rest keys)
+  (cond
+    ((null table) nil)
+    ((hash-table-p table)
+     (dolist (key keys)
+       (let ((v (or (gethash key table)
+                    (and (stringp key) (gethash (string-downcase key) table))
+                    (and (keywordp key)
+                         (gethash (string-downcase (symbol-name key)) table)))))
+         (when v (return v)))))
+    ((listp table)
+     (dolist (key keys)
+       (let ((v (or (and (keywordp key) (getf table key))
+                    (cdr (assoc key table :test #'equal)))))
+         (when v (return v)))))))
+
+(defun %tool-int (value default)
+  (cond
+    ((integerp value) value)
+    ((and (realp value) (zerop (mod value 1))) (truncate value))
+    ((and (stringp value) (plusp (length value)))
+     (or (ignore-errors (parse-integer value :junk-allowed t)) default))
+    (t default)))
+
+(defun make-search-workspace-tool (ws)
+  (mcp:make-mcp-tool
+   "search_workspace"
+   :description "Search the jailed workspace:// tree. Returns ranked workspace:// URIs."
+   :input-schema (mcp:json-object
+                  "type" "object"
+                  "additionalProperties" t
+                  "properties"
+                  (mcp:json-object
+                   "query" (mcp:json-object "type" "string")
+                   "top_k" (mcp:json-object "type" "integer")))
+   :handler (lambda (args)
+              (let* ((query (or (%mcp-arg args "query" :query) ""))
+                     (k (max 1 (min 16 (%tool-int (%mcp-arg args "top_k" :top-k :top_k) 6))))
+                     (root (research-tree-root ws))
+                     (hits (when root
+                             (search-research-tree root query
+                                                   :top-k k
+                                                   :workspace ws))))
+                (mcp:tool-result
+                 (list (mcp:make-text-content
+                        (with-output-to-string (s)
+                          (if hits
+                              (dolist (h hits)
+                                (format s "~a~%~a~%"
+                                        (workspace-resource-uri (getf h :rel))
+                                        (or (getf h :rel) "")))
+                              (format s "(no workspace hits)~%"))))))))))
+
+(defun make-read-workspace-tool (ws)
+  (mcp:make-mcp-tool
+   "read_workspace"
+   :description "Read a workspace:// URI or relative path. Jail rejects .. and absolute paths."
+   :input-schema (mcp:json-object
+                  "type" "object"
+                  "additionalProperties" t
+                  "properties"
+                  (mcp:json-object
+                   "uri" (mcp:json-object "type" "string")
+                   "path" (mcp:json-object "type" "string")))
+   :handler (lambda (args)
+              (let* ((raw (or (%mcp-arg args "uri" :uri "path" :path) ""))
+                     (rel (if (workspace-resource-uri-p raw)
+                              (workspace-uri-relpath raw)
+                              raw))
+                     (root (or (research-tree-root ws)
+                               (error 'research-error
+                                      :message "no workspace root"))))
+                (mcp:tool-result
+                 (list (mcp:make-text-content
+                        (read-research-tree-file root rel))))))))
+
+(defun attach-workspace-to-expert-mcp (server domain &key tree-root)
+  "Mount workspace:// + search/read tools on an expert MCP server.
+   No-op when DOMAIN has no resolvable checkout root."
+  (unless (and server (expert-domain-p domain) (%ensure-mcp-loaded))
+    (return-from attach-workspace-to-expert-mcp nil))
+  (let ((ws (make-research-workspace :name (or (expert-name domain) "workspace")
+                                     :domain domain
+                                     :tree-root tree-root
+                                     :mcp server)))
+    (unless (research-tree-root ws)
+      (return-from attach-workspace-to-expert-mcp nil))
+    (%register-workspace-resources ws server)
+    (mcp:register-tool server (make-search-workspace-tool ws))
+    (mcp:register-tool server (make-read-workspace-tool ws))
+    (setf (research-workspace-mcp ws) server)
+    (setf (mcp:mcp-server-instructions server)
+          (format nil "~a~%Local checkout: workspace://. Tools: search_workspace, read_workspace. Prefer those over web."
+                  (or (mcp:mcp-server-instructions server)
+                      (format nil "Demiurge expert ~a" (expert-name domain)))))
+    ws))

@@ -33,6 +33,13 @@
         (asdf:load-system "sql-backend-sqlite3" :verbose nil)
         (find-package '#:sql-backend-sqlite3))))
 
+(defun %write-tree-file (root rel text)
+  (let ((path (merge-pathnames rel (uiop:ensure-directory-pathname root))))
+    (ensure-directories-exist path)
+    (with-open-file (out path :direction :output :if-exists :supersede)
+      (write-string text out))
+    path))
+
 (defmacro with-tmp-dir ((var) &body body)
   `(let ((,var (ensure-directories-exist
                 (uiop:ensure-directory-pathname

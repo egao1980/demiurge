@@ -118,6 +118,9 @@
    #:ensure-research-tree-index
    #:workspace-symbol-map
    #:research-workspace-tree-index
+   #:attach-workspace-to-expert-mcp
+   #:make-search-workspace-tool
+   #:make-read-workspace-tool
 
    #:report-workflow-progress
    #:sync-workflow-wire

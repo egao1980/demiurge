@@ -354,13 +354,6 @@
     (ok (search "Common Lisp"
                 (getf (bb:read-section board :research-instructions) :expert)))))
 
-(defun %write-tree-file (root rel text)
-  (let ((path (merge-pathnames rel (uiop:ensure-directory-pathname root))))
-    (ensure-directories-exist path)
-    (with-open-file (out path :direction :output :if-exists :supersede)
-      (write-string text out))
-    path))
-
 (deftest research-tree-jail-rejects-dotdot
   "pathlib:under + relative-to-p: lexical .. and absolute paths stay outside."
   (with-tmp-dir (root)

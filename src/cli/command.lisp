@@ -318,6 +318,11 @@
          (port (or (cli:get-option opts :port) 8080)))
     (format t "Serving ~a transports ~{~a~^,~} ~a:~a~%"
             (expert-name domain) transports host port)
+    (let* ((prof (expert-profile domain))
+           (cfg (and (deployment-profile-p prof) (profile-config prof)))
+           (root (and cfg (demiurge-config-workspace-root cfg))))
+      (when (and root (plusp (length (string root))))
+        (format t "workspace:// → ~a~%" root)))
     (serve:serve-expert domain
                         :transports transports
                         :host host
@@ -529,7 +534,7 @@
    (list
     (cli:make-command
      :name "serve"
-     :description "Serve an expert over MCP / HTTP (A2A + AG-UI)."
+     :description "Serve an expert over MCP / HTTP (A2A + AG-UI). MCP mounts workspace:// from [workspace] root."
      :options
      (list (cli:make-option :name "config" :short #\c :long "config"
                             :kind :string :key :config
