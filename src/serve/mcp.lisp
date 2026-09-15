@@ -32,8 +32,15 @@
                           (format nil "~a~%feedback-id: ~a"
                                   (or text "") fid)))))))))
 
+(defun %attach-workspace-mcp (server domain)
+  "When demiurge/workflows is loaded and DOMAIN has a checkout root,
+   mount workspace:// + search/read tools. Soft dep — serve stays loadable alone."
+  (let ((fn (find-symbol "ATTACH-WORKSPACE-TO-EXPERT-MCP" :demiurge/workflows)))
+    (when (and fn (fboundp fn))
+      (funcall fn server domain))))
+
 (defun make-expert-mcp-server (domain &key blackboard name)
-  "Catalogue tools + ask_expert + record_feedback."
+  "Catalogue tools + ask_expert + record_feedback + workspace:// when available."
   (check-type domain expert-domain)
   (let ((server (wire.mcp:make-mcp-server-from-catalogue
                  (expert-catalogue domain)
@@ -43,4 +50,5 @@
                  :instructions (format nil "Demiurge expert ~a" (expert-name domain)))))
     (mcp:register-tool server (make-ask-expert-tool domain))
     (mcp:register-tool server (make-record-feedback-tool domain))
+    (%attach-workspace-mcp server domain)
     server))

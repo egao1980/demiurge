@@ -28,6 +28,13 @@
    #:unknown-expert
    #:unknown-expert-name
    #:invalid-expert
+   #:expert-config-error
+   #:expert-config-error-path
+   #:expert-config-error-issues
+   #:unknown-expert-config-key
+   #:unknown-expert-config-key-name
+   #:unknown-expert-config-valid-keys
+   #:unknown-expert-config-section
    #:missing-event-backend
    #:compute-denied
    #:persistence-error
@@ -57,6 +64,8 @@
    #:demiurge-config-llm-default-model
    #:demiurge-config-llm-catalog
    #:demiurge-config-paths-data-dir
+   #:demiurge-config-workspace-root
+   #:demiurge-config-workspace-seed
    #:demiurge-config-improve-enabled
    #:demiurge-config-corporate-oidc-issuer
    #:demiurge-config-corporate-oidc-client-id
@@ -100,10 +109,14 @@
    #:profile-default-model
    #:profile-skill-store
    #:profile-require-hitl-p
+   #:resolve-profile-llm
+   #:profile-backend-summary
 
    #:expert-domain
    #:expert-domain-p
    #:make-expert-domain
+   #:instantiate-expert-domain
+   #:load-expert-config
    #:expert-name
    #:expert-catalogue
    #:expert-ks-set

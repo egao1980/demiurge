@@ -112,3 +112,47 @@
            (lambda (d) (declare (ignore d)) nil)))
       (ok (= 503 (first (funcall app '(:request-method :get
                                        :path-info "/readyz"))))))))
+
+(defun %workspace-echo (root)
+  (let* ((cfg (make-instance 'demiurge-config
+                             :workspace-root
+                             (namestring (uiop:ensure-directory-pathname root))))
+         (profile (make-instance 'personal-profile :config cfg
+                                 :data-dir (namestring root))))
+    (make-echo-expert :backend (mock-llm) :name "echo-ws" :profile profile)))
+
+(deftest expert-mcp-exposes-workspace-tree
+  "demiurge serve MCP mounts workspace:// + search/read when [workspace] root is set."
+  (with-tmp-dir (root)
+    (%write-tree-file root "src/improve/cycle.lisp"
+                      "(defun no-critical-regression-gate () t)")
+    (%write-tree-file root "demos/queries.md"
+                      "Search workspace:// for no-critical-regression-gate.")
+    (let* ((domain (%workspace-echo root))
+           (server (make-expert-mcp-server domain))
+           (names (mapcar #'mcp:mcp-tool-name (mcp:list-tools server)))
+           (listed (mcp:list-resources server))
+           (uris (mapcar (lambda (r)
+                           (or (ignore-errors (mcp:mcp-resource-uri r))
+                               (and (consp r) (getf r :uri))))
+                         listed)))
+      (ok (find "ask_expert" names :test #'equal))
+      (ok (find "search_workspace" names :test #'equal))
+      (ok (find "read_workspace" names :test #'equal))
+      (ok (find "workspace://" uris :test #'equal))
+      (ok (find (workspace-resource-uri "src/improve/cycle.lisp") uris :test #'equal))
+      (let* ((hits (%mcp-text
+                    (mcp:call-tool server "search_workspace"
+                                   (mcp:json-object "query" "no-critical-regression-gate"))))
+             (cycle-pos (search "cycle.lisp" hits))
+             (query-pos (search "queries.md" hits)))
+        (ok cycle-pos)
+        (ok (or (null query-pos) (< cycle-pos query-pos))))
+      (let ((text (%mcp-text
+                   (mcp:call-tool server "read_workspace"
+                                  (mcp:json-object
+                                   "uri" "workspace://src/improve/cycle.lisp")))))
+        (ok (search "no-critical-regression-gate" text)))
+      (let ((bad (mcp:call-tool server "read_workspace"
+                                (mcp:json-object "path" "../etc/passwd"))))
+        (ok (and (hash-table-p bad) (gethash "isError" bad)))))))

@@ -7,11 +7,14 @@
                     (#:steer #:steer-protocol)
                     (#:eval #:eval-protocol)
                     (#:llm #:llm-protocol)
+                    (#:web #:websearch-protocol)
                     (#:task #:task-protocol)
                     (#:rag #:rag-protocol)
                     (#:schema #:schema-protocol)
+                    (#:toml #:toml-protocol)
                     (#:doc #:doc-extract-protocol)
-                    (#:ingest #:demiurge/ingest))
+                    (#:ingest #:demiurge/ingest)
+                    (#:pathlib #:cl-stack-pathlib))
   (:export
    #:bundle-error
    #:bundle-verification-error
@@ -58,6 +61,10 @@
    #:bundle-ks-definition-prompt-key
    #:bundle-ks-definition-result-key
    #:bundle-ks-definition-instructions
+   #:bundle-ks-definition-skill-ref
+   #:bundle-ks-definition-tool-grants
+   #:bundle-ks-definition-mcp-url
+   #:bundle-ks-definition-split-ratio
 
    #:bundle-provenance
    #:bundle-provenance-p
@@ -88,6 +95,8 @@
    #:install-expert
    #:rollback-expert
    #:verify-bundle-layout
+   #:load-expert-config
+   #:parse-expert-config
 
    #:*bundle-installs*
    #:clear-bundle-installs

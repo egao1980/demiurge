@@ -1,0 +1,22 @@
+{
+  "mcpServers": {
+    "demiurge-cl-dev": {
+      "command": "sbcl",
+      "args": [
+        "--noinform",
+        "--disable-debugger",
+        "--load",
+        "scripts/demiurge.lisp",
+        "--",
+        "serve",
+        "--config",
+        "examples/cl-dev-expert.toml",
+        "--transport",
+        "mcp"
+      ],
+      "env": {
+        "DEMIURGE_WORKSPACE": "${workspaceFolder}"
+      }
+    }
+  }
+}

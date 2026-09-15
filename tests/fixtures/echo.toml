@@ -1,0 +1,19 @@
+[expert]
+name = "echo"
+description = "CLI smoke echo expert."
+catalogue = "world"
+
+[llm]
+default-model = "mock"
+
+[[corpus]]
+kind = "file"
+spec = "corpus"
+pattern = "*.md"
+
+[[ks]]
+name = "echo"
+watch = "(:prompt)"
+prompt-key = "prompt"
+result-key = "result"
+instructions = "Echo the user."

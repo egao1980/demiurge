@@ -9,7 +9,10 @@
                     (#:web #:websearch-protocol)
                     (#:doc #:doc-extract-protocol)
                     (#:schema #:schema-protocol)
-                    (#:log #:log-protocol))
+                    (#:log #:log-protocol)
+                    (#:mcp #:mcp-protocol)
+                    (#:agent #:ai-agent-protocol)
+                    (#:pathlib #:cl-stack-pathlib))
   (:export
    #:workflows-error
    #:approval-required
@@ -63,14 +66,61 @@
    #:research-plan-subquestions
    #:coerce-research-plan
    #:research-plan-plist
+   #:make-workspace-seed-subquestion
+   #:ensure-research-plan-seed-subquestion
 
    #:*research-child-hook*
    #:*research-child-exec-hook*
    #:*research-phase-hook*
+   #:*research-trace-stream*
+   #:research-trace
    #:research-budget-scope
    #:wrap-research-llm
    #:run-deep-research
    #:render-research-document
+
+   #:*default-research-instructions*
+   #:*default-research-clip-chars*
+   #:merge-research-instructions
+   #:research-instruction
+   #:research-workspace
+   #:research-workspace-p
+   #:make-research-workspace
+   #:research-workspace-name
+   #:research-workspace-board
+   #:research-workspace-store
+   #:research-workspace-sources
+   #:research-workspace-mcp
+   #:research-workspace-instructions
+   #:research-workspace-tree-root
+   #:record-research-source
+   #:retrieve-research-sources
+   #:research-source-catalog
+   #:research-source-uri
+   #:clip-research-text
+   #:generate-research-step
+   #:*research-output-attempts*
+   #:ensure-research-mcp-server
+   #:list-research-resources
+   #:read-research-resource
+   #:research-mcp-server
+   #:research-mcp-server-p
+   #:workspace-resource-uri
+   #:workspace-resource-uri-p
+   #:resolve-research-tree-root
+   #:list-research-tree-files
+   #:read-research-tree-file
+   #:search-research-tree
+   #:ingest-workspace-hits
+   #:seed-research-workspace
+   #:workspace-seed-from-domain
+   #:workspace-local-query-p
+   #:ensure-research-tree-index
+   #:workspace-symbol-map
+   #:research-workspace-tree-index
+   #:attach-workspace-to-expert-mcp
+   #:make-search-workspace-tool
+   #:make-read-workspace-tool
 
    #:report-workflow-progress
    #:sync-workflow-wire

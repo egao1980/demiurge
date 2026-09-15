@@ -1,0 +1,496 @@
+(in-package #:demiurge/workflows)
+
+(defparameter *default-tree-skip-dirs*
+  '(".git" ".qlot" ".demo-oci" "node_modules" ".cache" "recordings"
+    ".local" "__fasl" ".asdf" "fasl")
+  "Directory names skipped while walking a research tree.")
+
+(defparameter *default-tree-suffixes*
+  '(".lisp" ".asd" ".md" ".toml" ".yml" ".yaml")
+  "Text suffixes exposed over workspace://.")
+
+(defparameter *default-tree-focus*
+  '("demiurge-plan-vectors/" "demiurge/" "demiurge-parity-wrap/demos/"
+    "MEMORY.md" "AGENTS.md" "docs/" "LESSONS_LEARNED.md")
+  "When ROOT looks like cl-workspace, walk these first.")
+
+(defparameter *default-tree-max-files* 400)
+(defparameter *default-tree-max-bytes* 200000)
+(defparameter *default-tree-preview-chars* 8000)
+
+(defstruct (tree-file-entry (:conc-name tfe-))
+  rel path mtime size text preview)
+
+(defun %env-nonempty (name)
+  (let ((v (uiop:getenv name)))
+    (and v (plusp (length v)) v)))
+
+(defun %as-dir (designator)
+  (and designator (pathlib:ensure-directory designator)))
+
+(defun %existing-dir-pathname (designator)
+  "DIRECTORY pathname via pathlib:absolute + normpath (not resolve — /tmp ≠ /private/tmp).
+   Collapse lexical `..` so expert.toml root=\"../../\" is a real checkout."
+  (let ((p (ignore-errors
+             (pathlib:normpath (pathlib:absolute (%as-dir designator))))))
+    (and p (pathlib:directory-p p)
+         (pathlib:path-pathname p))))
+
+(defun find-lisp-workspace-root (&optional (start (pathlib:cwd)))
+  "Walk up from START looking for .lisp-workspace/ or AGENTS.md."
+  (loop for dir = (%as-dir start)
+          then (pathlib:parent dir)
+        for prev = nil then dir
+        until (or (null dir)
+                  (and prev (equal (pathlib:as-posix dir)
+                                   (pathlib:as-posix prev))))
+        when (or (pathlib:exists-p (pathlib:join dir ".lisp-workspace"))
+                 (pathlib:exists-p (pathlib:join dir "AGENTS.md")))
+          return (pathlib:path-pathname (pathlib:absolute dir))))
+
+(defun resolve-research-tree-root (&optional explicit)
+  "EXPLICIT path, then DEMIURGE_WORKSPACE / CL_WORKSPACE, then walk-up."
+  (or (and explicit (%existing-dir-pathname explicit))
+      (let ((env (or (%env-nonempty "DEMIURGE_WORKSPACE")
+                     (%env-nonempty "CL_WORKSPACE"))))
+        (and env (%existing-dir-pathname env)))
+      (find-lisp-workspace-root)))
+
+(defun %tree-root-from-domain (domain)
+  (let* ((profile (and (expert-domain-p domain) (expert-profile domain)))
+         (cfg (and (deployment-profile-p profile) (profile-config profile)))
+         (raw (and cfg (demiurge-config-workspace-root cfg))))
+    (and raw (plusp (length (string raw)))
+         (%existing-dir-pathname raw))))
+
+(defun research-tree-root (ws)
+  (and (research-workspace-p ws) (research-workspace-tree-root ws)))
+
+(defun %tree-root-path (root)
+  (pathlib:absolute (%as-dir root)))
+
+(defun workspace-resource-uri (rel)
+  (let ((s (string-left-trim '(#\/)
+                             (if rel (pathlib:as-posix rel) ""))))
+    (if (plusp (length s))
+        (format nil "workspace://~a" s)
+        "workspace://")))
+
+(defun workspace-resource-uri-p (uri)
+  (and (stringp uri) (eql (search "workspace://" uri) 0)))
+
+(defun workspace-uri-relpath (uri)
+  (when (workspace-resource-uri-p uri)
+    (string-left-trim '(#\/) (subseq uri (length "workspace://")))))
+
+(defun %escapes-tree-p (rel)
+  "Lexical jail: absolute, drive letter, or `..` components."
+  (let* ((raw (substitute #\/ #\\ (string (or rel ""))))
+         (p (pathlib:path raw)))
+    (or (pathlib:absolute-p p)
+        (member ".." (pathlib:parts p) :test #'string=)
+        (and (>= (length raw) 2) (char= (char raw 1) #\:)))))
+
+(defun resolve-tree-path (root rel)
+  "Jail REL under ROOT with pathlib:under. Signals RESEARCH-ERROR on escape.
+   Uses absolute + normpath, not resolve, so /tmp identity is preserved."
+  (let* ((root-p (%tree-root-path root))
+         (raw (substitute #\/ #\\ (string (or rel "")))))
+    (when (zerop (length (string-left-trim '(#\/) raw)))
+      (return-from resolve-tree-path (pathlib:path-pathname root-p)))
+    (when (%escapes-tree-p raw)
+      (error 'research-error
+             :message (format nil "path escapes workspace: ~a" rel)))
+    (let ((merged (pathlib:normpath
+                   (pathlib:under root-p (string-left-trim '(#\/) raw)))))
+      (unless (pathlib:relative-to-p merged root-p)
+        (error 'research-error
+               :message (format nil "path escapes workspace: ~a" rel)))
+      (pathlib:path-pathname merged))))
+
+(defun %skip-dir-p (path skip)
+  (let ((name (pathlib:name (pathlib:ensure-directory path))))
+    (and name (member name skip :test #'string-equal))))
+
+(defun %suffix-ok-p (path suffixes)
+  (let ((suf (pathlib:suffix path)))
+    (and suf (plusp (length suf))
+         (member suf suffixes :test #'string-equal))))
+
+(defun %cl-workspace-root-p (root)
+  (let ((dir (%as-dir root)))
+    (and dir
+         (pathlib:exists-p (pathlib:join dir ".lisp-workspace"))
+         (pathlib:exists-p (pathlib:join dir "demiurge-plan-vectors"))
+         t)))
+
+(defun %rel-of (root path)
+  "POSIX relpath. absolute first; resolve both only if listing used realpath."
+  (let* ((root-p (%tree-root-path root))
+         (path-p (pathlib:absolute path)))
+    (flet ((rel (a b)
+             (when (pathlib:relative-to-p a b)
+               (string-left-trim
+                '(#\/)
+                (pathlib:as-posix (pathlib:relative-to a b))))))
+      (or (rel path-p root-p)
+          (let ((r-root (ignore-errors (pathlib:resolve root-p :strict nil)))
+                (r-path (ignore-errors (pathlib:resolve path-p :strict nil))))
+            (and r-root r-path (rel r-path r-root)))))))
+
+(defun %walk-one (root rel &key max-files suffixes skip)
+  (let ((start (handler-case (pathlib:path (resolve-tree-path root rel))
+                 (research-error () nil)
+                 (error () nil)))
+        (out '()))
+    (labels ((visit (p)
+               (when (>= (length out) max-files)
+                 (return-from visit))
+               (cond
+                 ((pathlib:directory-p p)
+                  (unless (%skip-dir-p p skip)
+                    (dolist (kid (ignore-errors (pathlib:iterdir p)))
+                      (visit kid))))
+                 ((and (pathlib:file-p p) (%suffix-ok-p p suffixes))
+                  (let ((rel (%rel-of root p)))
+                    (when rel (push rel out)))))))
+      (when (and start (pathlib:exists-p start))
+        (visit start)))
+    (nreverse out)))
+
+(defun list-research-tree-files (root &key (max-files *default-tree-max-files*)
+                                      (suffixes *default-tree-suffixes*)
+                                      (skip *default-tree-skip-dirs*))
+  "Relative path strings under ROOT, bounded and suffix-filtered."
+  (unless (and root (pathlib:directory-p (%as-dir root)))
+    (return-from list-research-tree-files nil))
+  (let ((acc '()))
+    (if (%cl-workspace-root-p root)
+        (dolist (focus *default-tree-focus*)
+          (when (< (length acc) max-files)
+            (setf acc (append acc
+                              (%walk-one root focus
+                                         :max-files (- max-files (length acc))
+                                         :suffixes suffixes
+                                         :skip skip)))))
+        (setf acc (%walk-one root ""
+                             :max-files max-files
+                             :suffixes suffixes
+                             :skip skip)))
+    (remove-duplicates acc :test #'equal)))
+
+(defun read-research-tree-file (root rel &key (max-bytes *default-tree-max-bytes*))
+  "UTF-8 text of REL under ROOT. Empty string if unreadable / too large."
+  (let ((p (pathlib:path (resolve-tree-path root rel))))
+    (cond
+      ((not (pathlib:exists-p p)) "")
+      ((pathlib:directory-p p) "")
+      (t
+       (let ((len (or (ignore-errors (pathlib:file-size p)) 0)))
+         (cond
+           ((> len max-bytes)
+            (format nil "[skipped ~a: ~d bytes > ~d]~%" rel len max-bytes))
+           (t
+            (handler-case (pathlib:read-text p)
+              (error ()
+                "")))))))))
+
+(defun %tree-file-score (query rel text)
+  "Token-fraction plus identifier/path boost so hyphenated symbols beat boilerplate.
+   Identifier queries rank on those tokens only (see %QUERY-SCORE-TOKENS)."
+  (let* ((hay (string-downcase (format nil "~a~%~a" rel (or text ""))))
+         (toks (%query-score-tokens query)))
+    (if (null toks)
+        0.0
+        (let ((hits 0)
+              (ident-hits 0))
+          (dolist (tok toks)
+            (when (search tok hay)
+              (incf hits)
+              (when (%identifier-token-p tok)
+                (incf ident-hits))))
+          (let ((frac (/ (float hits) (length toks)))
+                (path-boost (%source-path-boost rel))
+                (echo (if (%query-echo-p query text) -4.0 0.0)))
+            (+ frac (* 2.0 ident-hits) path-boost echo))))))
+
+(defun %rank-tree-hits (hits top-k)
+  (subseq (sort hits #'> :key (lambda (e) (getf e :score)))
+          0 (min top-k (length hits))))
+
+(defun search-research-tree (root query &key (top-k 4)
+                                        (max-files *default-tree-max-files*)
+                                        workspace)
+  "Top-K relative paths under ROOT scored against QUERY (path + preview).
+   When WORKSPACE has a tree-index, score the cache instead of re-walking."
+  (let ((index (and workspace (research-workspace-tree-index workspace))))
+    (if index
+        (%rank-tree-hits
+         (let ((ranked '()))
+           (maphash (lambda (rel entry)
+                      (let ((score (%tree-file-score query rel (tfe-preview entry))))
+                        (when (> score 0.0)
+                          (push (list :rel rel :score score
+                                      :preview (tfe-preview entry))
+                                ranked))))
+                    index)
+           ranked)
+         top-k)
+        (let ((ranked
+               (loop for rel in (list-research-tree-files root :max-files max-files)
+                     for preview = (let ((s (read-research-tree-file root rel)))
+                                     (if (<= (length s) *default-tree-preview-chars*)
+                                         s
+                                         (subseq s 0 *default-tree-preview-chars*)))
+                     for score = (%tree-file-score query rel preview)
+                     when (> score 0.0)
+                       collect (list :rel rel :score score :preview preview))))
+          (%rank-tree-hits ranked top-k)))))
+
+(defun workspace-catalog-text (ws)
+  (let ((root (research-tree-root ws)))
+    (with-output-to-string (s)
+      (format s "workspace root: ~a~%"
+              (or (and root (pathlib:as-posix root)) ""))
+      (dolist (rel (list-research-tree-files root))
+        (format s "~a~%" (workspace-resource-uri rel))))))
+
+(defun workspace-seed-from-domain (domain)
+  (let* ((profile (and (expert-domain-p domain) (expert-profile domain)))
+         (cfg (and (deployment-profile-p profile) (profile-config profile)))
+         (raw (and cfg (demiurge-config-workspace-seed cfg))))
+    (and raw (plusp (length (string raw))) (string raw))))
+
+(defun %source-uri (rec)
+  (getf rec :uri))
+
+(defun seed-research-workspace (ws &key query seed (top-k 6))
+  "Symbol-map + focus files, then checkout hits for SEED then QUERY."
+  (unless (research-tree-root ws)
+    (return-from seed-research-workspace nil))
+  (ensure-research-tree-index ws)
+  (let ((terms (remove-if (lambda (s) (or (null s) (zerop (length (string s)))))
+                          (list seed query)))
+        (out (append (or (ignore-errors (%ingest-symbol-map ws)) '())
+                     (or (ignore-errors (%ingest-focus-files ws)) '()))))
+    (dolist (term terms)
+      (research-trace "workspace seed ~s" term)
+      (setf out (append out
+                        (or (ignore-errors
+                              (ingest-workspace-hits ws term
+                                                     :top-k top-k
+                                                     :subquestion "seed"))
+                            '()))))
+    (research-trace "workspace seed hits=~d" (length out))
+    out))
+
+(defun ingest-workspace-hits (ws query &key (top-k 4) subquestion)
+  "Search the (cached) tree and record-research-source each new URI as :workspace."
+  (let ((root (research-tree-root ws)))
+    (unless root
+      (return-from ingest-workspace-hits nil))
+    (ensure-research-tree-index ws :root root)
+    (research-trace "workspace walk ~a" (pathlib:as-posix root))
+    (let ((index (research-workspace-tree-index ws))
+          (n 0)
+          (out '()))
+      (dolist (hit (search-research-tree root query :top-k top-k :workspace ws))
+        (let* ((rel (getf hit :rel))
+               (uri (workspace-resource-uri rel))
+               (entry (and index (gethash rel index)))
+               (text (or (and entry (tfe-text entry))
+                         (read-research-tree-file root rel)
+                         "")))
+          (unless (find uri (research-workspace-sources ws)
+                        :key #'%source-uri :test #'string=)
+            (incf n)
+            (push (record-research-source
+                   ws
+                   :id (format nil "ws-~a-~d" (or subquestion "src") n)
+                   :uri uri
+                   :title rel
+                   :text text
+                   :subquestion subquestion
+                   :kind :workspace)
+                  out))))
+      (nreverse out))))
+
+(defun %register-workspace-resources (ws server)
+  (mcp:register-resource
+   server
+   (mcp:make-mcp-resource
+    "workspace://"
+    :name "workspace"
+    :title "Local workspace tree"
+    :description "Jailed checkout. Read workspace://<relpath>."
+    :mime-type "text/plain"
+    :handler (lambda (res)
+               (declare (ignore res))
+               (workspace-catalog-text ws))))
+  (mcp:register-resource-template
+   server
+   (mcp:make-mcp-resource-template
+    "workspace://{path}"
+    :name "workspace-file"
+    :title "Workspace file"
+    :description "Text file under the jailed research tree root"
+    :mime-type "text/plain"
+    :complete (lambda (name value)
+                (declare (ignore name))
+                (let ((prefix (or value "")))
+                  (loop for rel in (list-research-tree-files
+                                    (research-tree-root ws))
+                        when (eql (search prefix rel) 0)
+                          collect rel)))))
+  (dolist (rel (list-research-tree-files (research-tree-root ws)))
+    (let ((uri (workspace-resource-uri rel)))
+      (mcp:register-resource
+       server
+       (mcp:make-mcp-resource
+        uri
+        :name rel
+        :title rel
+        :description "Local workspace file"
+        :mime-type "text/plain"
+        :handler (lambda (res)
+                   (declare (ignore res))
+                   (read-research-tree-file (research-tree-root ws) rel)))))))
+
+(defmethod mcp:read-resource ((server research-mcp-server) uri &key)
+  (if (workspace-resource-uri-p uri)
+      (let* ((ws (research-mcp-server-workspace server))
+             (rel (workspace-uri-relpath uri))
+             (root (and ws (research-tree-root ws)))
+             (text (cond
+                     ((or (null rel) (zerop (length rel)))
+                      (workspace-catalog-text ws))
+                     (root (read-research-tree-file root rel))
+                     (t ""))))
+        (mcp:json-object "contents"
+                         (vector (mcp:json-object "uri" uri
+                                                  "mimeType" "text/plain"
+                                                  "text" (or text "")))))
+      (call-next-method)))
+
+(defun make-research-workspace (&key name board store instructions domain
+                                  clip-chars mcp tree-root)
+  (let* ((board (or board (bb:make-blackboard)))
+         (store (%maybe-wrap-hybrid
+                 (or store (rag:make-mock-vector-store
+                            :dimension *research-embed-dim*))))
+         (merged (merge-research-instructions instructions))
+         (expert (%domain-expert-instructions domain))
+         (root (or (and tree-root (%existing-dir-pathname tree-root))
+                   (%tree-root-from-domain domain)
+                   (and (or (%env-nonempty "DEMIURGE_WORKSPACE")
+                            (%env-nonempty "CL_WORKSPACE"))
+                        (resolve-research-tree-root)))))
+    (when expert
+      (setf (getf merged :expert) expert))
+    (%finish-research-workspace
+     (make-instance 'research-workspace
+                    :name (or name "research")
+                    :board board
+                    :store store
+                    :instructions merged
+                    :clip-chars (or clip-chars *default-research-clip-chars*)
+                    :tree-root root
+                    :mcp mcp)
+     :mcp mcp)))
+
+(defun %mcp-arg (table &rest keys)
+  (cond
+    ((null table) nil)
+    ((hash-table-p table)
+     (dolist (key keys)
+       (let ((v (or (gethash key table)
+                    (and (stringp key) (gethash (string-downcase key) table))
+                    (and (keywordp key)
+                         (gethash (string-downcase (symbol-name key)) table)))))
+         (when v (return v)))))
+    ((listp table)
+     (dolist (key keys)
+       (let ((v (or (and (keywordp key) (getf table key))
+                    (cdr (assoc key table :test #'equal)))))
+         (when v (return v)))))))
+
+(defun %tool-int (value default)
+  (cond
+    ((integerp value) value)
+    ((and (realp value) (zerop (mod value 1))) (truncate value))
+    ((and (stringp value) (plusp (length value)))
+     (or (ignore-errors (parse-integer value :junk-allowed t)) default))
+    (t default)))
+
+(defun make-search-workspace-tool (ws)
+  (mcp:make-mcp-tool
+   "search_workspace"
+   :description "Search the jailed workspace:// tree. Returns ranked workspace:// URIs."
+   :input-schema (mcp:json-object
+                  "type" "object"
+                  "additionalProperties" t
+                  "properties"
+                  (mcp:json-object
+                   "query" (mcp:json-object "type" "string")
+                   "top_k" (mcp:json-object "type" "integer")))
+   :handler (lambda (args)
+              (let* ((query (or (%mcp-arg args "query" :query) ""))
+                     (k (max 1 (min 16 (%tool-int (%mcp-arg args "top_k" :top-k :top_k) 6))))
+                     (root (research-tree-root ws))
+                     (hits (when root
+                             (search-research-tree root query
+                                                   :top-k k
+                                                   :workspace ws))))
+                (mcp:tool-result
+                 (list (mcp:make-text-content
+                        (with-output-to-string (s)
+                          (if hits
+                              (dolist (h hits)
+                                (format s "~a~%~a~%"
+                                        (workspace-resource-uri (getf h :rel))
+                                        (or (getf h :rel) "")))
+                              (format s "(no workspace hits)~%"))))))))))
+
+(defun make-read-workspace-tool (ws)
+  (mcp:make-mcp-tool
+   "read_workspace"
+   :description "Read a workspace:// URI or relative path. Jail rejects .. and absolute paths."
+   :input-schema (mcp:json-object
+                  "type" "object"
+                  "additionalProperties" t
+                  "properties"
+                  (mcp:json-object
+                   "uri" (mcp:json-object "type" "string")
+                   "path" (mcp:json-object "type" "string")))
+   :handler (lambda (args)
+              (let* ((raw (or (%mcp-arg args "uri" :uri "path" :path) ""))
+                     (rel (if (workspace-resource-uri-p raw)
+                              (workspace-uri-relpath raw)
+                              raw))
+                     (root (or (research-tree-root ws)
+                               (error 'research-error
+                                      :message "no workspace root"))))
+                (mcp:tool-result
+                 (list (mcp:make-text-content
+                        (read-research-tree-file root rel))))))))
+
+(defun attach-workspace-to-expert-mcp (server domain &key tree-root)
+  "Mount workspace:// + search/read tools on an expert MCP server.
+   No-op when DOMAIN has no resolvable checkout root."
+  (unless (and server (expert-domain-p domain) (%ensure-mcp-loaded))
+    (return-from attach-workspace-to-expert-mcp nil))
+  (let ((ws (make-research-workspace :name (or (expert-name domain) "workspace")
+                                     :domain domain
+                                     :tree-root tree-root
+                                     :mcp server)))
+    (unless (research-tree-root ws)
+      (return-from attach-workspace-to-expert-mcp nil))
+    (%register-workspace-resources ws server)
+    (mcp:register-tool server (make-search-workspace-tool ws))
+    (mcp:register-tool server (make-read-workspace-tool ws))
+    (setf (research-workspace-mcp ws) server)
+    (setf (mcp:mcp-server-instructions server)
+          (format nil "~a~%Local checkout: workspace://. Tools: search_workspace, read_workspace. Prefer those over web."
+                  (or (mcp:mcp-server-instructions server)
+                      (format nil "Demiurge expert ~a" (expert-name domain)))))
+    ws))
