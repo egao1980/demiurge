@@ -701,10 +701,9 @@
                        (%phase "plan"
                                (lambda ()
                                  (research-plan-plist
-                                  (%plan-from-llm
-                                   llm question
-                                   :workspace workspace
-                                   :seed (workspace-seed-from-domain domain)))))))
+                                  (%plan-from-llm llm question
+                                                  :workspace workspace
+                                                  :seed (workspace-seed-from-domain domain))))))))
                 (report-workflow-progress
                  wf :board board :round 0 :status :working
                  :summary (format nil "plan ~a subquestions"
@@ -713,4 +712,4 @@
                 (deliver)))
           (use-partial ()
             :report "Deliver a graceful partial report"
-            (partial :budget-exceeded children))))))))
+            (partial :budget-exceeded children)))))))
