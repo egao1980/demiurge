@@ -244,7 +244,7 @@ seed = \"KSAR blackboard\"
          (cfg (profile-config (expert-profile domain)))
          (root (demiurge-config-workspace-root cfg)))
     (ok (and root (plusp (length root))))
-    (ok (probe-file (uiop:ensure-directory-pathname root)))
+    (ok (pathlib:directory-p (pathlib:from-string root)))
     (ok (equal "KSAR blackboard" (demiurge-config-workspace-seed cfg)))))
 
 (deftest expert-config-workspace-root-collapses-dotdot
@@ -265,5 +265,5 @@ root = \"../../\"
              (cfg (profile-config (expert-profile domain)))
              (resolved (demiurge-config-workspace-root cfg)))
         (ok (and resolved (null (search ".." resolved))))
-        (ok (probe-file (merge-pathnames "note.md"
-                                         (uiop:ensure-directory-pathname resolved))))))))
+        (ok (pathlib:exists-p (pathlib:join (pathlib:from-string resolved)
+                                            "note.md")))))))

@@ -28,6 +28,7 @@
                     (#:jwt #:cl-stack-jwt)
                     (#:ldap #:ldap-protocol)
                     (#:http.p #:http-protocol)
-                    (#:http.async #:http-backend-async)))
+                    (#:http.async #:http-backend-async)
+                    (#:pathlib #:cl-stack-pathlib)))
 
 (in-package #:demiurge/tests)
