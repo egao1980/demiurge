@@ -66,6 +66,8 @@
    #:research-plan-subquestions
    #:coerce-research-plan
    #:research-plan-plist
+   #:make-workspace-seed-subquestion
+   #:ensure-research-plan-seed-subquestion
 
    #:*research-child-hook*
    #:*research-child-exec-hook*

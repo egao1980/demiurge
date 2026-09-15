@@ -521,3 +521,56 @@
         (ensure-research-tree-index ws)
         (ok (eq (gethash "a.md" first)
                 (gethash "a.md" (research-workspace-tree-index ws))))))))
+
+(deftest ensure-research-plan-seed-subquestion-injects-gate
+  (let* ((plan (make-research-plan
+                :question "self-reflection"
+                :subquestions (list (make-research-subquestion
+                                     :id "s1"
+                                     :question "What file implements self-reflection in workspace://?"))))
+         (out (ensure-research-plan-seed-subquestion
+               plan
+               :question "improve cycle with no-critical-regression-gate"
+               :seed "KSAR no-critical-regression-gate gap-analysis"))
+         (first (first (research-plan-subquestions out))))
+    (ok (search "no-critical-regression-gate"
+                (research-subquestion-question first)))
+    (ok (search "gap-analysis" (research-subquestion-question first)))
+    (ok (workspace-local-query-p (research-subquestion-question first)))
+    (ok (equal "s1" (research-subquestion-id
+                     (second (research-plan-subquestions out)))))))
+
+(deftest ensure-research-plan-seed-subquestion-skips-when-covered
+  (let* ((q "Search workspace:// for no-critical-regression-gate. Quote the file.")
+         (plan (make-research-plan
+                :question "gate"
+                :subquestions (list (make-research-subquestion :id "s1" :question q))))
+         (out (ensure-research-plan-seed-subquestion
+               plan :question "no-critical-regression-gate")))
+    (ok (= 1 (length (research-plan-subquestions out))))
+    (ok (equal "s1" (research-subquestion-id
+                     (first (research-plan-subquestions out)))))))
+
+(deftest deep-research-forces-seed-workspace-subquestion
+  (with-tmp-dir (root)
+    (%write-tree-file root "improve.md"
+                      "The improve cycle uses no-critical-regression-gate.")
+    (let* ((board (bb:make-blackboard))
+           (result (%run-research :task-id "research-seed-q"
+                                  :blackboard board
+                                  :tree-root root
+                                  :question "no-critical-regression-gate"))
+           (qs (mapcar (lambda (c) (getf c :question))
+                       (getf result :children)))
+           (sources (bb:read-section board :sources :default nil)))
+      (ok (find-if (lambda (q)
+                     (and (workspace-local-query-p q)
+                          (search "no-critical-regression-gate" q
+                                  :test #'char-equal)))
+                   qs)
+          "plan includes a forced workspace:// identifier lookup")
+      (ok (find :workspace sources :key (lambda (s) (getf s :kind))))
+      (ok (find-if (lambda (s)
+                     (search "improve.md" (or (getf s :uri) "")))
+                   sources)
+          "identifier lookup ingested the gate file"))))

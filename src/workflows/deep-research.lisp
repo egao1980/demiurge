@@ -102,6 +102,55 @@
                               :rationale (or (research-subquestion-rationale q)
                                              ""))))))
 
+(defun %named-identifier-terms (&rest texts)
+  "Hyphen/`_`/`/` identifiers from TEXTS. Empty / NIL texts are ignored."
+  (remove-duplicates
+   (loop for text in texts
+         nconc (remove-if-not #'%identifier-token-p
+                              (%tokenize (or text ""))))
+   :test #'string=))
+
+(defun %subquestion-covers-terms-p (subq terms)
+  (let ((q (cond
+             ((research-subquestion-p subq) (research-subquestion-question subq))
+             ((and (consp subq) (keywordp (first subq))) (getf subq :question))
+             (t ""))))
+    (and (workspace-local-query-p q)
+         (plusp (length terms))
+         (every (lambda (tok) (search tok q :test #'char-equal)) terms))))
+
+(defun make-workspace-seed-subquestion (&key question seed (id "seed-ws"))
+  "One workspace:// lookup that names every identifier in QUESTION and SEED."
+  (let ((terms (%named-identifier-terms question seed)))
+    (when terms
+      (make-research-subquestion
+       :id id
+       :question (format nil
+                         "Search workspace:// for ~{~a~^, ~}. Quote the defining file and function; do not expand acronyms."
+                         terms)
+       :rationale "Forced local lookup of named identifiers."))))
+
+(defun ensure-research-plan-seed-subquestion (plan &key question seed)
+  "Prepend a workspace:// identifier search unless the plan already has one."
+  (let* ((plan (coerce-research-plan plan :question question))
+         (q (or question (research-plan-question plan) ""))
+         (terms (%named-identifier-terms q seed))
+         (required (%named-identifier-terms q)))
+    (cond
+      ((null terms) plan)
+      ((find-if (lambda (sq)
+                  (%subquestion-covers-terms-p sq (or required terms)))
+                (research-plan-subquestions plan))
+       plan)
+      (t
+       (let ((seed-q (make-workspace-seed-subquestion :question q :seed seed)))
+         (when seed-q
+           (research-trace "plan seed-subquestion ~s"
+                           (research-subquestion-question seed-q))
+           (setf (research-plan-subquestions plan)
+                 (cons seed-q (research-plan-subquestions plan))))
+         plan)))))
+
 (defvar *research-child-hook* nil
   "Optional (lambda (child input)) invoked after spawn-child-task returns.")
 
@@ -314,7 +363,7 @@
       (funcall *research-child-hook* child input))
     child))
 
-(defun %plan-from-llm (llm question &key workspace)
+(defun %plan-from-llm (llm question &key workspace seed)
   (let* ((prompt (format nil
                          "Decompose this question into a schema-typed research plan with subquestions: ~a"
                          question))
@@ -323,7 +372,10 @@
                                            :workspace workspace))
          (out (or (and response (llm:llm-response-output response))
                   (and response (llm:llm-response-text response)))))
-    (coerce-research-plan out :question question)))
+    (ensure-research-plan-seed-subquestion
+     (coerce-research-plan out :question question)
+     :question question
+     :seed seed)))
 
 (defun %gap-from-llm (llm question children &key workspace)
   (let* ((clip (if (research-workspace-p workspace)
@@ -649,8 +701,10 @@
                        (%phase "plan"
                                (lambda ()
                                  (research-plan-plist
-                                  (%plan-from-llm llm question
-                                                  :workspace workspace)))))))
+                                  (%plan-from-llm
+                                   llm question
+                                   :workspace workspace
+                                   :seed (workspace-seed-from-domain domain)))))))
                 (report-workflow-progress
                  wf :board board :round 0 :status :working
                  :summary (format nil "plan ~a subquestions"
@@ -659,4 +713,4 @@
                 (deliver)))
           (use-partial ()
             :report "Deliver a graceful partial report"
-            (partial :budget-exceeded children)))))))
+            (partial :budget-exceeded children))))))))
