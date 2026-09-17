@@ -88,6 +88,13 @@
    #:resume-domain
    #:domain-task-id
    #:call-with-durable-ksar
+   #:*current-ksar*
+   #:fresh-durable-id
+   #:durable-activation-id
+   #:ensure-board-run-id
+   #:assign-board-run-id
+   #:journal-effect-receipt
+   #:find-effect-receipt
 
    #:deployment-profile
    #:deployment-profile-p

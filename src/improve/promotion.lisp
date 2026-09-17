@@ -35,23 +35,45 @@
                              :verdict verdict)))
   provenance)
 
+(defun %promotion-skill-name (domain)
+  (if (expert-domain-p domain)
+      (expert-name domain)
+      "ks"))
+
+(defun %promotion-key-match-p (version cycle-id eval-run-id)
+  (let ((p (and version (steer:skill-version-provenance version))))
+    (and p
+         (equal (getf p :cycle-id) cycle-id)
+         (equal (getf p :eval-run-id) eval-run-id))))
+
+(defun find-promoted-skill-version (store name cycle-id eval-run-id)
+  "Existing skill-version for CYCLE-ID + EVAL-RUN-ID, or NIL."
+  (when (and store name cycle-id eval-run-id)
+    (find-if (lambda (v)
+               (%promotion-key-match-p v cycle-id eval-run-id))
+             (steer:skill-versions store name))))
+
 (defun save-promoted-skill (domain revision &key cycle-id eval-run-id
                                               baseline-score candidate-score
                                               skill-store blackboard
                                               (verdict :promote))
   "Promote = save-skill-version when an A4 store is present (soft),
-   write a board decision, emit demiurge.improve.promotion."
+   write a board decision, emit demiurge.improve.promotion.
+   Upserts by cycle-id + eval-run-id so a crash-window retry does not duplicate."
   (let* ((prov (list :cycle-id cycle-id
                      :eval-run-id eval-run-id
                      :baseline-score baseline-score
                      :candidate-score candidate-score
                      :verdict verdict))
          (store (%skill-store-of domain skill-store))
+         (skill-name (%promotion-skill-name domain))
          (skill (and (eq verdict :promote)
                      (%skill-from-revision domain revision)))
          (saved nil))
     (when (and store skill)
-      (setf saved (steer:save-skill-version store skill :provenance prov)))
+      (setf saved (or (find-promoted-skill-version
+                       store skill-name cycle-id eval-run-id)
+                      (steer:save-skill-version store skill :provenance prov))))
     (record-improve-decision blackboard prov)
     (when (and (eq verdict :promote) log:*log-backend*)
       (log:with-context (:eval-run-id eval-run-id

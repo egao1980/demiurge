@@ -74,14 +74,170 @@
           (tenant-task-id name))
         (format nil "domain/~a" name))))
 
-(defun %ksar-task-id (domain ks)
-  (let ((name (if (expert-domain-p domain)
-                  (expert-name domain)
-                  domain)))
+(defvar *durable-id-counter* 0
+  "Monotonic suffix for FRESH-DURABLE-ID.")
+
+(defvar *current-ksar* nil
+  "KSAR bound by the watch wrapper while a handler runs.")
+
+(defvar *board-run-ids* (make-hash-table :test 'eq)
+  "Root blackboard → domain run-id string.")
+
+(defun fresh-durable-id (prefix &optional name)
+  "Unique id for a new run/cycle invocation. Explicit ids resume."
+  (check-type prefix string)
+  (format nil "~a/~@[~a/~]~d-~d"
+          prefix
+          (and name (string name))
+          (get-universal-time)
+          (incf *durable-id-counter*)))
+
+(defun %domain-name (domain)
+  (if (expert-domain-p domain)
+      (expert-name domain)
+      domain))
+
+(defun %run-id-string (value)
+  (cond
+    ((null value) nil)
+    ((task:run-id-p value) (task:run-id-value value))
+    (t (princ-to-string value))))
+
+(defun assign-board-run-id (blackboard &key domain run-id)
+  "Bind RUN-ID on BLACKBOARD. Explicit RUN-ID resumes; otherwise mint once."
+  (let ((root (bb:find-root-bb blackboard)))
+    (cond
+      (run-id
+       (setf (gethash root *board-run-ids*) (%run-id-string run-id)))
+      ((gethash root *board-run-ids*))
+      (t (setf (gethash root *board-run-ids*)
+               (fresh-durable-id "run" (and domain (%domain-name domain))))))))
+
+(defun ensure-board-run-id (blackboard &optional domain)
+  "Return the run id for BLACKBOARD, creating one on first use."
+  (assign-board-run-id blackboard :domain domain))
+
+(defun %ksar-task-id (domain ks &optional activation-id)
+  (let ((name (%domain-name domain))
+        (ks-name (bb:ks-name ks)))
+    (if activation-id
+        (if (current-tenant)
+            (format nil "tenant/~a/domain/~a/ksar/~a/~a"
+                    (current-tenant) name ks-name activation-id)
+            (format nil "domain/~a/ksar/~a/~a" name ks-name activation-id))
+        (if (current-tenant)
+            (format nil "tenant/~a/domain/~a/ksar/~a"
+                    (current-tenant) name ks-name)
+            (format nil "domain/~a/ksar/~a" name ks-name)))))
+
+(defun %ksar-id-string (ksar)
+  (cond
+    ((and ksar (bb:ksar-id ksar))
+     (princ-to-string (bb:ksar-id ksar)))
+    (t (format nil "anon-~d" (incf *durable-id-counter*)))))
+
+(defun %trigger-event-seq (blackboard ksar)
+  "Board-journal event-seq of the enqueue-ksar that created KSAR, or NIL."
+  (let ((journal (bbj:board-journal blackboard))
+        (task (bbj:board-journal-task blackboard))
+        (id (and ksar (bb:ksar-id ksar))))
+    (when (and journal task id)
+      (dolist (ev (reverse (task:journal-events journal task)))
+        (when (and (typep ev 'task:step-completed)
+                   (equal (task:step-name ev) "enqueue-ksar"))
+          (let ((r (task:step-result ev)))
+            (when (equal (getf r :id) id)
+              (return (or (task:event-seq ev) 0)))))))))
+
+(defun durable-activation-id (blackboard ks &key domain ksar run-id generation)
+  "Activation key: run-id / board-generation / ks-name / ksar-id."
+  (let* ((ksar (or ksar *current-ksar*))
+         (run (or run-id (ensure-board-run-id blackboard domain)))
+         (gen (or generation
+                  (%trigger-event-seq blackboard ksar)
+                  (and ksar (bb:ksar-id ksar))
+                  0))
+         (ks-name (bb:ks-name ks))
+         (kid (%ksar-id-string ksar)))
+    (format nil "~a/~a/~a/~a" run gen ks-name kid)))
+
+(defun %receipts-task-id (domain)
+  (let ((name (%domain-name domain)))
     (if (current-tenant)
-        (format nil "tenant/~a/domain/~a/ksar/~a"
-                (current-tenant) name (bb:ks-name ks))
-        (format nil "domain/~a/ksar/~a" name (bb:ks-name ks)))))
+        (format nil "tenant/~a/domain/~a/receipts" (current-tenant) name)
+        (format nil "domain/~a/receipts" name))))
+
+(defun %lookup-effect-receipt (task journal activation-id &key run-id)
+  "Replay TASK from JOURNAL without starting it, then look up the receipt."
+  (when (and task journal)
+    (setf (task:durable-task-journal task) journal)
+    (when (task:journal-events journal task)
+      (task:replay-journal journal task))
+    (or (task:find-effect-receipt task activation-id
+                                  :run-id run-id
+                                  :activation-id activation-id)
+        (task:find-effect-receipt task activation-id))))
+
+(defun journal-effect-receipt (journal activation-id payload
+                               &key domain task run-id)
+  "Record a side-effect receipt keyed by ACTIVATION-ID on TASK (or the
+   domain receipts task). Distinct from the activation step result."
+  (check-type activation-id string)
+  (let* ((run (and run-id (task:make-run-id run-id)))
+         (act (task:make-activation-id activation-id run))
+         (receipt-task (or (and task (task:durable-task-p task) task)
+                           (task:make-durable-task
+                            :id (if domain
+                                    (%receipts-task-id domain)
+                                    "receipts")
+                            :journal journal
+                            :run-id run
+                            :activation-id act)))
+         (existing (%lookup-effect-receipt receipt-task journal activation-id
+                                           :run-id run)))
+    (or existing
+        (task:with-durable-task (receipt-task journal)
+          (or (task:find-effect-receipt receipt-task activation-id
+                                        :run-id run
+                                        :activation-id act)
+              (task:record-effect-receipt
+               receipt-task
+               (task:make-effect-receipt
+                :idempotency-key activation-id
+                :payload (append (list :activation-id activation-id) payload)
+                :run-id run
+                :activation-id act)
+               :journal journal))))))
+
+(defun find-effect-receipt (journal activation-id &key domain task run-id)
+  "Find a previously journaled receipt for ACTIVATION-ID, or NIL."
+  (let ((run (and run-id (task:make-run-id run-id))))
+    (or (%lookup-effect-receipt task journal activation-id :run-id run)
+        (and domain
+             (%lookup-effect-receipt
+              (task:make-durable-task :id (%receipts-task-id domain)
+                                      :journal journal)
+              journal activation-id :run-id run))
+        (dolist (tid (task:journal-task-ids journal) nil)
+          (let ((found (%lookup-effect-receipt
+                        (task:make-durable-task :id tid :journal journal)
+                        journal activation-id :run-id run)))
+            (when found (return found)))))))
+
+(defmethod bb:watch :around ((bb bb:blackboard) &key id requires handler
+                            (priority 0) one-shot)
+  "Bind *CURRENT-KSAR* so durable keys can include the KSAR id."
+  (call-next-method bb
+                    :id id
+                    :requires requires
+                    :handler (if handler
+                                 (let ((inner handler))
+                                   (lambda (board ksar)
+                                     (let ((*current-ksar* ksar))
+                                       (funcall inner board ksar))))
+                                 handler)
+                    :priority priority
+                    :one-shot one-shot))
 
 (defun %ensure-sqlite-backend ()
   (or (find-package '#:sql-backend-sqlite3)
@@ -131,44 +287,68 @@
          :report "Use a supplied journal"
          journal)))))
 
-(defun attach-domain-journal (blackboard journal &key domain task-id)
-  "Attach JOURNAL as the blackboard-journal spine of BLACKBOARD."
+(defun attach-domain-journal (blackboard journal &key domain task-id run-id)
+  "Attach JOURNAL as the blackboard-journal spine of BLACKBOARD.
+   RUN-ID is optional: explicit value resumes that run; otherwise mint once."
   (let* ((id (or task-id
                  (and domain (domain-task-id domain))
                  "blackboard"))
          (ctx (bbj:enable-blackboard-journal blackboard journal :task-id id)))
     (when (expert-domain-p domain)
       (setf (gethash (bb:find-root-bb blackboard) *board-domains*) domain))
+    (assign-board-run-id blackboard :domain domain :run-id run-id)
     ctx))
 
 (defun %domain-for-board (blackboard)
   (gethash (bb:find-root-bb blackboard) *board-domains*))
 
+(defun %canonicalize-activation-result (run)
+  (cond
+    ((and run (agent:agent-run-p run))
+     (or (agent:agent-run-text run) t))
+    ((or (stringp run) (symbolp run) (numberp run) (null run))
+     run)
+    (t t)))
+
 (defun call-with-durable-ksar (blackboard ks thunk)
   "Run THUNK as a task-protocol WITH-DURABLE-STEP when the board has a journal.
-   Each KS uses its own task id so board write-section events do not collide."
+   The durable key includes run id, board generation (trigger-event seq),
+   KS name, and KSAR id so only that exact activation is replayed."
   (let ((journal (bbj:board-journal blackboard))
         (domain (%domain-for-board blackboard)))
     (if (and journal domain)
-        (let ((task (task:make-durable-task
-                     :id (%ksar-task-id domain ks)
-                     :journal journal)))
+        (let* ((run-str (ensure-board-run-id blackboard domain))
+               (run (task:make-run-id run-str))
+               (activation (durable-activation-id blackboard ks
+                                                  :domain domain
+                                                  :run-id run-str))
+               (act (task:make-activation-id activation run))
+               (step-name (format nil "execute/~a" activation))
+               (task (task:make-durable-task
+                      :id (%ksar-task-id domain ks activation)
+                      :journal journal
+                      :run-id run
+                      :activation-id act)))
           (task:with-durable-task (task journal)
-            (task:with-durable-step ("execute"
-                                     :idempotency-key
-                                     (format nil "ksar/~a" (bb:ks-name ks)))
-              (let ((run (funcall thunk)))
-                (cond
-                  ((and run (agent:agent-run-p run))
-                   (or (agent:agent-run-text run) t))
-                  ((or (stringp run) (symbolp run) (numberp run) (null run))
-                   run)
-                  (t t))))))
+            (prog1
+                (task:with-durable-step (step-name
+                                         :idempotency-key activation
+                                         :run-id run
+                                         :activation-id act)
+                  (let ((run-result (funcall thunk)))
+                    (%canonicalize-activation-result run-result)))
+              (journal-effect-receipt journal activation
+                                      (list :ks (string (bb:ks-name ks))
+                                            :kind :ksar-activation)
+                                      :domain domain
+                                      :task task
+                                      :run-id run-str))))
         (funcall thunk))))
 
-(defun resume-domain (name profile)
+(defun resume-domain (name profile &key run-id)
   "Open the domain journal, REPLAY-BLACKBOARD onto a fresh board, re-arm timers.
-   Re-registers the KS set. → EXPERT-CONTROLLER."
+   Re-registers the KS set. → EXPERT-CONTROLLER.
+   Explicit RUN-ID resumes that execution identity; otherwise mint a fresh one."
   (let* ((domain (require-expert name))
          (cfg (if (deployment-profile-p profile)
                   (or (profile-config profile) (current-demiurge-config))
@@ -181,10 +361,14 @@
          (replayed (bbj:replay-blackboard journal
                                          :blackboard board
                                          :task-id task-id)))
-    (attach-domain-journal replayed journal :domain domain :task-id task-id)
+    (attach-domain-journal replayed journal
+                          :domain domain
+                          :task-id task-id
+                          :run-id run-id)
     (task:fire-due-timers journal)
     (make-controller domain
                      :blackboard replayed
                      :journal journal
                      :profile profile
+                     :run-id run-id
                      :register t)))

@@ -1,5 +1,5 @@
 (defsystem "demiurge"
-  :version "0.3.7"
+  :version "0.3.8"
   :description "Self-improving expert-system core for cl-stack (defexpert + agent-ks + controller)"
   :author "egao1980"
   :license "MIT"
@@ -20,7 +20,7 @@
                "rag-backend-sql"
                "llm-protocol"
                "llm-protocol/router"
-               "task-protocol"
+               (:version "task-protocol" "0.2.0")
                "task-backend-sql"
                "sql-protocol"
                "telemetry-protocol"
@@ -64,7 +64,7 @@
   :in-order-to ((test-op (test-op "demiurge/tests"))))
 
 (defsystem "demiurge/improve"
-  :version "0.3.7"
+  :version "0.3.8"
   :description "Self-improvement cycle for demiurge (versioned-ks + eval gates)"
   :author "egao1980"
   :license "MIT"

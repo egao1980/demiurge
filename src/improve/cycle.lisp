@@ -281,7 +281,7 @@
    Restarts PROMOTE / DEMOTE / DEFER. Corporate HITL is off by default."
   (check-type domain expert-domain)
   (let* ((cycle-id (or cycle-id
-                       (format nil "improve/~a" (expert-name domain))))
+                       (fresh-durable-id "improve" (expert-name domain))))
          (journal (%journal-for domain journal))
          (task (task:make-durable-task
                 :id (or task-id cycle-id)

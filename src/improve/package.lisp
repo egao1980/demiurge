@@ -61,6 +61,7 @@
    #:wrap-llm-budget
 
    #:save-promoted-skill
+   #:find-promoted-skill-version
    #:record-improve-decision
    #:emit-promotion-metric
 

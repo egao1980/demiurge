@@ -2,7 +2,9 @@
 
 (defmacro with-clean-registry (&body body)
   `(let ((demiurge::*expert-registry* (make-hash-table :test 'equal))
-         (demiurge::*board-domains* (make-hash-table :test 'eq)))
+         (demiurge::*board-domains* (make-hash-table :test 'eq))
+         (demiurge::*board-run-ids* (make-hash-table :test 'eq))
+         (demiurge::*current-ksar* nil))
      ,@body))
 
 (defun drain (bb &key (timeout 8))
