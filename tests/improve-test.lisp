@@ -144,6 +144,43 @@
                   :activity-floor 0)))
     (ok (eq :defer (getf result :verdict)))))
 
+(deftest improve-promotion-upserts-by-cycle-and-eval-id
+  (with-tmp-dir (tmp)
+    (let* ((store (steer:make-file-skill-store tmp))
+           (domain (%improve-domain :name "upsert-promo"))
+           (rev (make-ks-revision :skill-text "echo: ")))
+      (save-promoted-skill domain rev
+                           :cycle-id "c1" :eval-run-id "e1"
+                           :skill-store store :verdict :promote)
+      (save-promoted-skill domain rev
+                           :cycle-id "c1" :eval-run-id "e1"
+                           :skill-store store :verdict :promote)
+      (ok (= 1 (length (steer:skill-versions store "upsert-promo"))))
+      (ok (find-promoted-skill-version store "upsert-promo" "c1" "e1"))
+      (save-promoted-skill domain rev
+                           :cycle-id "c1" :eval-run-id "e2"
+                           :skill-store store :verdict :promote)
+      (ok (= 2 (length (steer:skill-versions store "upsert-promo")))))))
+
+(deftest improve-cycle-mints-fresh-cycle-id
+  (let* ((cases (list (eval:make-eval-case :input "hi" :expected "echo: hi")))
+         (domain (%improve-domain :name "fresh-cycle" :cases cases))
+         (r1 (run-improvement-cycle
+              domain
+              :target (first (expert-ks-set domain))
+              :llm (%revision-llm "echo: ")
+              :journal (task:make-in-memory-journal)
+              :activity-floor 0))
+         (r2 (run-improvement-cycle
+              domain
+              :target (first (expert-ks-set domain))
+              :llm (%revision-llm "echo: ")
+              :journal (task:make-in-memory-journal)
+              :activity-floor 0)))
+    (ok (not (equal (getf r1 :cycle-id) "improve/fresh-cycle")))
+    (ok (not (equal (getf r1 :cycle-id) (getf r2 :cycle-id)))
+        "two invocations without cycle-id do not share an id")))
+
 (deftest improve-kill-and-resume-mid-cycle
   (let* ((cases (list (eval:make-eval-case :input "hi" :expected "echo: hi")))
          (domain (%improve-domain :name "resume-e2e" :cases cases))

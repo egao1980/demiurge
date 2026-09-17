@@ -71,6 +71,93 @@
                 (ok (equal "echo: sql" (bb:read-section fresh :result)))
                 (ok (equal (%section-alist board) (%section-alist fresh))))))))))
 
+(defun %enqueue-ksar-ids (journal task-id)
+  (let ((task (task-protocol:make-durable-task :id task-id :journal journal)))
+    (loop for ev in (task-protocol:journal-events journal task)
+          when (and (typep ev 'task-protocol:step-completed)
+                    (equal (task-protocol:step-name ev) "enqueue-ksar"))
+            collect (getf (task-protocol:step-result ev) :id))))
+
+(defun %counting-echo-backend (counter)
+  (llm:make-mock-llm-backend
+   :handler (lambda (backend turns &key &allow-other-keys)
+              (declare (ignore backend turns))
+              (incf (car counter))
+              (llm:make-llm-response
+               :parts (list (llm:make-llm-text-part
+                             :text (format nil "echo: n=~a" (car counter))))))))
+
+(deftest durable-ksar-same-ks-two-activations-execute-twice
+  "Same KS twice on one domain = two executions. Replay of the first
+   activation does not re-execute. Receipts are journaled per activation."
+  (with-clean-registry
+    (with-tmp-dir (tmp)
+      (let* ((journal (task-protocol:make-in-memory-journal))
+             (profile (%memory-profile tmp journal))
+             (counter (list 0))
+             (domain (make-echo-expert :backend (%counting-echo-backend counter)
+                                       :name "ksar-twice"
+                                       :profile profile)))
+        (register-expert domain)
+        (let* ((controller (make-controller domain
+                                            :journal journal
+                                            :profile profile))
+               (board (controller-blackboard controller))
+               (ks (first (expert-ks-set domain))))
+          (run-controller controller :trigger '(:prompt "one"))
+          (run-controller controller :trigger '(:prompt "two"))
+          (ok (= 2 (car counter))
+              "two live activations execute twice")
+          (ok (equal "echo: n=2" (bb:read-section board :result)))
+          (let* ((ids (%enqueue-ksar-ids journal (domain-task-id domain)))
+                 (first-id (first ids))
+                 (activation
+                  (let ((*current-ksar* (bb:make-ksar :id first-id)))
+                    (durable-activation-id board ks :domain domain))))
+            (ok (= 2 (length ids)))
+            (ok (not (equal (first ids) (second ids))))
+            (ok (find-effect-receipt journal activation :domain domain)
+                "side-effect receipt keyed by first activation")
+            (ok (typep (find-effect-receipt journal activation :domain domain)
+                       'task-protocol:effect-receipt)
+                "receipt is a task-protocol effect-receipt, not the step result")
+            (let ((*current-ksar* (bb:make-ksar :id first-id)))
+              (call-with-durable-ksar board ks
+                                      (lambda ()
+                                        (incf (car counter))
+                                        "should-not-run")))
+            (ok (= 2 (car counter))
+                "replay of the first activation does not re-execute")
+            (ok (find-effect-receipt journal activation :domain domain))))))))
+
+(deftest fresh-run-id-by-default-explicit-resumes
+  (with-clean-registry
+    (with-tmp-dir (tmp)
+      (let* ((journal (task-protocol:make-in-memory-journal))
+             (profile (%memory-profile tmp journal))
+             (domain (make-echo-expert :backend (mock-llm)
+                                       :name "run-ids"
+                                       :profile profile)))
+        (register-expert domain)
+        (let* ((c1 (make-controller domain :journal journal :profile profile))
+               (id1 (ensure-board-run-id (controller-blackboard c1) domain))
+               (c2 (make-controller domain
+                                    :blackboard (bb:make-blackboard)
+                                    :journal journal
+                                    :profile profile))
+               (id2 (ensure-board-run-id (controller-blackboard c2) domain))
+               (c3 (make-controller domain
+                                    :blackboard (bb:make-blackboard)
+                                    :journal journal
+                                    :profile profile
+                                    :run-id id1))
+               (id3 (ensure-board-run-id (controller-blackboard c3) domain)))
+          (ok (and (stringp id1) (plusp (length id1))))
+          (ok (not (equal id1 id2))
+              "new controller mints a fresh run id")
+          (ok (equal id1 id3)
+              "explicit run-id resumes"))))))
+
 (deftest personal-profile-factory
   (with-tmp-dir (tmp)
     (let ((profile (make-personal-profile

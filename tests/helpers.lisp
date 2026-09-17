@@ -1,8 +1,12 @@
 (in-package #:demiurge/tests)
 
 (defmacro with-clean-registry (&body body)
+  "Reset registries. *BOARD-DOMAINS* and *BOARD-RUN-IDS* are mutated
+   in place — KSAR workers do not inherit special rebindings."
   `(let ((demiurge::*expert-registry* (make-hash-table :test 'equal))
-         (demiurge::*board-domains* (make-hash-table :test 'eq)))
+         (demiurge::*current-ksar* nil))
+     (clrhash demiurge::*board-domains*)
+     (clrhash demiurge::*board-run-ids*)
      ,@body))
 
 (defun drain (bb &key (timeout 8))

@@ -33,16 +33,22 @@
   ks)
 
 (defun register-expert-ks (blackboard domain)
-  "Register DOMAIN's KS set on BLACKBOARD. Watcher requires = KS-WATCH-KEYS."
+  "Register DOMAIN's KS set on BLACKBOARD. Watcher requires = KS-WATCH-KEYS.
+   Wrap the watcher so *CURRENT-KSAR* is bound for activation-scoped keys."
   (setf (gethash (bb:find-root-bb blackboard) *board-domains*) domain)
   (dolist (ks (expert-ks-set domain))
     (%prepare-agent-ks ks domain)
-    (bb:register-ks blackboard ks :requires (ks-watch-keys ks)))
+    (bb:register-ks blackboard ks :requires (ks-watch-keys ks))
+    (let ((watcher (bb:get-watcher blackboard (bb:ks-name ks))))
+      (when watcher
+        (setf (bb:watcher-handler watcher)
+              (%bind-current-ksar (bb:watcher-handler watcher))))))
   blackboard)
 
 (defun make-controller (domain &key blackboard journal profile
                                  (stop-section :stop)
                                  max-concurrency
+                                 run-id
                                  (register t))
   (check-type domain expert-domain)
   (let* ((cfg (%config-for domain))
@@ -59,7 +65,9 @@
                                     :blackboard board
                                     :stop-section stop-section)))
     (when j
-      (attach-domain-journal board j :domain domain))
+      (attach-domain-journal board j :domain domain :run-id run-id))
+    (when (and run-id (not j))
+      (assign-board-run-id board :domain domain :run-id run-id))
     (when register
       (register-expert-ks board domain))
     controller))
@@ -71,21 +79,32 @@
      (loop for (key value) on trigger by #'cddr
            do (bb:write-section blackboard key value)))))
 
+(defmethod bb:enqueue-ksar :around (bb ksar)
+  "Bind *CURRENT-KSAR* for every activation, including continuations."
+  (let ((inner (bb:ksar-handler ksar)))
+    (when inner
+      (setf (bb:ksar-handler ksar) (%bind-current-ksar inner))))
+  (call-next-method))
+
 (defmethod bb:enqueue-ksar :after (bb ksar)
   (declare (ignore ksar))
   (record-agenda-depth bb))
 
-(defun run-controller (controller &key (until-empty t) timeout trigger)
+(defun run-controller (controller &key (until-empty t) timeout trigger run-id)
   "Write optional TRIGGER sections, then RUN-SCHEDULER until the agenda is
    empty (or START-SCHEDULER when UNTIL-EMPTY is NIL). If STOP-SECTION is
    already bound, return immediately. No polling loop.
-   KSAR execution is journaled via CALL-WITH-DURABLE-KSAR when a journal is attached."
+   KSAR execution is journaled via CALL-WITH-DURABLE-KSAR when a journal is attached.
+   Explicit RUN-ID resumes that execution identity; otherwise the board's
+   existing run id is kept (minted on first attach)."
   (let* ((board (controller-blackboard controller))
+         (domain (controller-domain controller))
          (stop (controller-stop-section controller))
-         (cfg (%config-for (controller-domain controller)))
+         (cfg (%config-for domain))
          (timeout (or timeout (demiurge-config-ksar-timeout-seconds cfg)))
          (journal (bbj:board-journal board))
          (task (and journal (bbj:board-journal-task board))))
+    (assign-board-run-id board :domain domain :run-id run-id)
     (when (and stop (bb:section-bound-p board stop))
       (return-from run-controller board))
     (flet ((run ()
@@ -102,13 +121,15 @@
     board))
 
 (defun run-expert (domain &key board trigger timeout stop-section
-                            max-concurrency journal profile)
-  "Make a controller, register the KS set, write TRIGGER, drain the agenda."
+                            max-concurrency journal profile run-id)
+  "Make a controller, register the KS set, write TRIGGER, drain the agenda.
+   Explicit RUN-ID resumes that execution identity; otherwise mint a fresh run."
   (let ((controller (make-controller domain
                                      :blackboard board
                                      :stop-section (or stop-section :stop)
                                      :max-concurrency max-concurrency
                                      :journal journal
-                                     :profile profile)))
-    (run-controller controller :trigger trigger :timeout timeout)
+                                     :profile profile
+                                     :run-id run-id)))
+    (run-controller controller :trigger trigger :timeout timeout :run-id run-id)
     (controller-blackboard controller)))
