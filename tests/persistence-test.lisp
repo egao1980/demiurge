@@ -113,13 +113,14 @@
                  (first-id (first ids))
                  (activation
                   (let ((*current-ksar* (bb:make-ksar :id first-id)))
-                    (durable-activation-id board ks :domain domain))))
+                    (durable-activation-id board ks :domain domain)))
+                 (receipt (find-effect-receipt journal activation
+                                               :domain domain)))
             (ok (= 2 (length ids)))
             (ok (not (equal (first ids) (second ids))))
-            (ok (find-effect-receipt journal activation :domain domain)
+            (ok receipt
                 "side-effect receipt keyed by first activation")
-            (ok (typep (find-effect-receipt journal activation :domain domain)
-                       'task-protocol:effect-receipt)
+            (ok (typep receipt 'task-protocol:effect-receipt)
                 "receipt is a task-protocol effect-receipt, not the step result")
             (let ((*current-ksar* (bb:make-ksar :id first-id)))
               (call-with-durable-ksar board ks
