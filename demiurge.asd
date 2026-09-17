@@ -132,6 +132,7 @@
   :serial t
   :pathname "src/ingest"
   :components ((:file "package")
+               (:file "conditions")
                (:file "sources")
                (:file "pipeline")))
 

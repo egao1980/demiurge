@@ -63,11 +63,28 @@
     ((pathnamep p) (namestring p))
     (t (pathlib:as-namestring p))))
 
+(defun %text-format-p (fmt)
+  (member fmt '(:txt :text :md :markdown :rst :plain nil) :test #'eq))
+
+(defun %binary-format-p (fmt)
+  (member fmt '(:pdf :docx :xlsx :pptx :odt :ods :odp
+                :png :jpg :jpeg :gif :webp :tif :tiff
+                :bin :zip :gz :doc :xls :ppt)
+          :test #'eq))
+
 (defclass ingest-source ()
-  ())
+  ((source-id :initarg :source-id :accessor ingest-source-assigned-id
+              :initform nil)))
 
 (defun ingest-source-p (x)
   (typep x 'ingest-source))
+
+(defgeneric ingest-source-id (source)
+  (:documentation "Stable ownership token written onto every chunk."))
+
+(defmethod ingest-source-id ((source ingest-source))
+  (or (ingest-source-assigned-id source)
+      (format nil "~(~a~)" (class-name (class-of source)))))
 
 (defgeneric enumerate-items (source)
   (:documentation "→ list of INGEST-ITEM with stable content hashes."))
@@ -93,8 +110,17 @@
 (defun file-source-p (x)
   (typep x 'file-source))
 
-(defun make-file-source (&key root (pattern "*") (recursive t))
-  (make-instance 'file-source :root root :pattern pattern :recursive recursive))
+(defun make-file-source (&key root (pattern "*") (recursive t) source-id)
+  (make-instance 'file-source :root root :pattern pattern :recursive recursive
+                              :source-id source-id))
+
+(defmethod ingest-source-id ((source file-source))
+  (or (ingest-source-assigned-id source)
+      (format nil "file:~a"
+              (string-right-trim
+               "/\\"
+               (%path-string (uiop:ensure-directory-pathname
+                              (file-source-root source)))))))
 
 (defun %name-matches-pattern-p (namestring pattern)
   (cond
@@ -131,9 +157,7 @@
                    (uiop:file-exists-p p)
                    (pathlib:file-p p))
             collect (let* ((ns (%path-string p))
-                           (text (if (pathnamep p)
-                                     (uiop:read-file-string p)
-                                     (pathlib:read-text p)))
+                           (fmt (%infer-format ns))
                            (bytes (if (pathnamep p)
                                       (with-open-file (in p :element-type
                                                           '(unsigned-byte 8))
@@ -142,13 +166,21 @@
                                                                '(unsigned-byte 8))))
                                           (read-sequence buf in)
                                           buf))
-                                      (pathlib:read-bytes p))))
+                                      (pathlib:read-bytes p)))
+                           (content (cond
+                                      ((%binary-format-p fmt)
+                                       (or (and (pathnamep p) p)
+                                           (and (stringp ns) (probe-file ns))
+                                           bytes))
+                                      ((pathnamep p)
+                                       (uiop:read-file-string p))
+                                      (t (pathlib:read-text p)))))
                       (make-ingest-item
                        :id ns
                        :uri ns
-                       :content text
+                       :content content
                        :hash (content-hash bytes)
-                       :format (%infer-format ns))))))
+                       :format fmt)))))
 
 (defclass imap-source (ingest-source)
   ((client :initarg :client :accessor imap-source-client :initform nil)
@@ -163,7 +195,7 @@
   (typep x 'imap-source))
 
 (defun make-imap-source (&key client mailbox host port username password
-                           (search "ALL"))
+                           (search "ALL") source-id)
   (make-instance 'imap-source
                  :client client
                  :mailbox (or mailbox "INBOX")
@@ -171,7 +203,14 @@
                  :host host
                  :port (or port 143)
                  :username username
-                 :password password))
+                 :password password
+                 :source-id source-id))
+
+(defmethod ingest-source-id ((source imap-source))
+  (or (ingest-source-assigned-id source)
+      (format nil "imap:~a:~a"
+              (or (imap-source-host source) "local")
+              (imap-source-mailbox source))))
 
 (defun %ensure-imap-client (source)
   (or (imap-source-client source)
@@ -322,9 +361,16 @@
 (defun s3-source-p (x)
   (typep x 's3-source))
 
-(defun make-s3-source (&key store bucket (prefix "") (page-size 1000))
+(defun make-s3-source (&key store bucket (prefix "") (page-size 1000) source-id)
   (make-instance 's3-source :store store :bucket bucket :prefix (or prefix "")
-                            :page-size (or page-size 1000)))
+                            :page-size (or page-size 1000)
+                            :source-id source-id))
+
+(defmethod ingest-source-id ((source s3-source))
+  (or (ingest-source-assigned-id source)
+      (format nil "s3:~a/~a"
+              (or (s3-source-bucket source) "")
+              (or (s3-source-prefix source) ""))))
 
 (defun %object-text (bytes)
   (if (stringp bytes)
@@ -344,8 +390,14 @@
         do (setf token (obj:object-listing-continuation-token listing))
         while (obj:object-listing-truncated-p listing)))
 
+(defun %coerce-object-content (bytes fmt)
+  (if (%binary-format-p fmt)
+      bytes
+      (%object-text bytes)))
+
 (defun %ensure-item-content (item)
-  "Load octets on demand when CONTENT is empty (S3 get-object)."
+  "Load octets on demand when CONTENT is empty (S3 get-object).
+   Binary formats keep octets; text formats decode."
   (when (and (null (ingest-item-content item))
              (ingest-item-metadata item))
     (let* ((meta (ingest-item-metadata item))
@@ -353,7 +405,8 @@
            (key (getf meta :key)))
       (when (and store key)
         (let ((bytes (obj:get-object store key)))
-          (setf (ingest-item-content item) (%object-text bytes))
+          (setf (ingest-item-content item)
+                (%coerce-object-content bytes (ingest-item-format item)))
           (unless (ingest-item-hash item)
             (setf (ingest-item-hash item) (content-hash bytes)))))))
   (ingest-item-content item))
@@ -374,12 +427,13 @@
           for etag = (or (and head (obj:object-stat-etag head))
                          (obj:object-stat-etag stat))
           for bytes = (obj:get-object store key)
+          for fmt = (%infer-format key)
           collect (make-ingest-item
                    :id key
                    :uri (format nil "s3://~a/~a" (or bucket "") key)
-                   :content (%object-text bytes)
+                   :content (%coerce-object-content bytes fmt)
                    :hash (content-hash bytes)
-                   :format (%infer-format key)
+                   :format fmt
                    :metadata (list :bucket bucket :key key :etag etag
                                    :object-store store)))))
 

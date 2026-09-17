@@ -14,6 +14,16 @@
    #:ingest-error
    #:ingest-source-error
    #:ingest-source-error-source
+   #:ingest-stage-error
+   #:ingest-stage-error-stage
+   #:ingest-stage-error-item
+   #:ingest-stage-error-retryable-p
+   #:ingest-extractor-error
+   #:ingest-extractor-error-format
+   #:ingest-embedder-error
+   #:ingest-store-error
+   #:ingest-store-required
+   #:ingest-store-required-domain
 
    #:ingest-item
    #:ingest-item-p
@@ -30,6 +40,7 @@
 
    #:ingest-source
    #:ingest-source-p
+   #:ingest-source-id
    #:file-source
    #:file-source-p
    #:make-file-source
@@ -42,23 +53,13 @@
    #:enumerate-items
 
    #:*ingest-item-hook*
+   #:*ingest-profile*
    #:list-stored-chunks
    #:stored-content-hashes
    #:sweep-deleted-items
+   #:ingest-one-item
    #:run-ingest)
   (:documentation
    "Durable ingest: enumerate sources, extract, chunk, embed, upsert."))
 
 (in-package #:demiurge/ingest)
-
-(define-condition ingest-error (demiurge-error)
-  ()
-  (:report (lambda (c s)
-             (format s "demiurge ingest error~@[: ~A~]"
-                     (demiurge-error-message c)))))
-
-(define-condition ingest-source-error (ingest-error)
-  ((source :initarg :source :reader ingest-source-error-source :initform nil))
-  (:report (lambda (c s)
-             (format s "ingest source error~@[: ~A~]"
-                     (demiurge-error-message c)))))
