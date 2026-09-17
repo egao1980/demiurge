@@ -249,10 +249,14 @@
     (and mem (conv:load-session (conv:memory-store mem) session-key))))
 
 (defun %turn-mentions (turns needle)
-  (some (lambda (tr)
-          (let ((text (ignore-errors (llm:turn-text tr))))
-            (and text (search needle text))))
-        turns))
+  (let ((needle (and needle (princ-to-string needle))))
+    (and needle
+         (plusp (length needle))
+         (some (lambda (tr)
+                 (let ((text (or (ignore-errors (llm:turn-text tr))
+                                 (ignore-errors (princ-to-string tr)))))
+                   (and text (search needle text))))
+               (if (listp turns) turns (and turns (list turns)))))))
 
 (deftest request-session-key-is-principal-tenant-transport-conversation
   (let ((alice-http (request-session-key :principal "alice" :tenant "acme"
