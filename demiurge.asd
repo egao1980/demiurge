@@ -1,5 +1,5 @@
 (defsystem "demiurge"
-  :version "0.3.9"
+  :version "0.3.10"
   :description "Self-improving expert-system core for cl-stack (defexpert + agent-ks + controller)"
   :author "egao1980"
   :license "MIT"
@@ -64,7 +64,7 @@
   :in-order-to ((test-op (test-op "demiurge/tests"))))
 
 (defsystem "demiurge/improve"
-  :version "0.3.9"
+  :version "0.3.10"
   :description "Self-improvement cycle for demiurge (versioned-ks + eval gates)"
   :author "egao1980"
   :license "MIT"
@@ -79,7 +79,7 @@
                (:file "cycle")))
 
 (defsystem "demiurge/observe"
-  :version "0.3.9"
+  :version "0.3.10"
   :description "Observability subsystem: span/metric taxonomy, health, profiles"
   :author "egao1980"
   :license "MIT"
@@ -94,7 +94,7 @@
                (:file "profiles")))
 
 (defsystem "demiurge/serve"
-  :version "0.3.9"
+  :version "0.3.10"
   :description "Serve an expert-domain over MCP / A2A / AG-UI"
   :author "egao1980"
   :license "MIT"
@@ -118,7 +118,7 @@
                (:file "app")))
 
 (defsystem "demiurge/ingest"
-  :version "0.3.9"
+  :version "0.3.10"
   :description "Durable corpus ingest for demiurge (file / IMAP / object-store)"
   :author "egao1980"
   :license "MIT"
@@ -138,7 +138,7 @@
                (:file "pipeline")))
 
 (defsystem "demiurge/workflows"
-  :version "0.3.9"
+  :version "0.3.10"
   :description "Durable project workflows and deep-research fan-out"
   :author "egao1980"
   :license "MIT"
@@ -165,7 +165,7 @@
                (:file "deep-research")))
 
 (defsystem "demiurge/bundle"
-  :version "0.3.9"
+  :version "0.3.10"
   :description "Expert-bundle packaging and distribution (OCI layout + install)"
   :author "egao1980"
   :license "MIT"
@@ -193,7 +193,7 @@
                (:file "expert-config")))
 
 (defsystem "demiurge/cli"
-  :version "0.3.9"
+  :version "0.3.10"
   :description "demiurge command-line entrypoint (cli-protocol + clingon)"
   :author "egao1980"
   :license "MIT"
