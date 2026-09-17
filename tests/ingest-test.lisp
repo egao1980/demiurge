@@ -361,7 +361,7 @@
                                   :embedder (mock-llm))
                  'ingest-extractor-error))
     (ok (null (list-stored-chunks store))
-        "failed extract must not upsert a plain-text fallback"))))
+        "failed extract must not upsert a plain-text fallback")))
 
 (deftest ingest-extractor-use-value
   (let* ((item (make-ingest-item :id "x.bin" :uri "x.bin"
