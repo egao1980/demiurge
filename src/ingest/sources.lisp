@@ -187,24 +187,55 @@
    (mailbox :initarg :mailbox :accessor imap-source-mailbox :initform "INBOX")
    (search :initarg :search :accessor imap-source-search :initform "ALL")
    (host :initarg :host :accessor imap-source-host :initform nil)
-   (port :initarg :port :accessor imap-source-port :initform 143)
+   (port :initarg :port :accessor imap-source-port :initform nil)
    (username :initarg :username :accessor imap-source-username :initform nil)
-   (password :initarg :password :accessor imap-source-password :initform nil)))
+   (password :initarg :password :accessor imap-source-password :initform nil)
+   (tls :initarg :tls :accessor imap-source-tls :initform :starttls)))
 
 (defun imap-source-p (x)
   (typep x 'imap-source))
 
+(defun %imap-tls-mode (tls)
+  "→ :TLS | :STARTTLS | NIL (plaintext)."
+  (cond
+    ((or (eq tls t) (eq tls :tls) (eq tls :imaps)) :tls)
+    ((or (eq tls :starttls) (eq tls :start-tls) (eq tls :always)) :starttls)
+    ((or (null tls) (eq tls :plain) (eq tls :none)) nil)
+    (t :starttls)))
+
+(defun imap-tls-mode (source)
+  (%imap-tls-mode (imap-source-tls source)))
+
+(defun imap-secure-p (source)
+  (not (null (imap-tls-mode source))))
+
+(defun %default-imap-port (tls-mode)
+  (if (eq tls-mode :tls) 993 143))
+
+(defun %assert-imap-not-plaintext (source)
+  (unless (imap-secure-p source)
+    (error 'imap-plaintext-refused
+           :source source
+           :message "IMAP login requires TLS or STARTTLS")))
+
 (defun make-imap-source (&key client mailbox host port username password
-                           (search "ALL") source-id)
-  (make-instance 'imap-source
-                 :client client
-                 :mailbox (or mailbox "INBOX")
-                 :search (or search "ALL")
-                 :host host
-                 :port (or port 143)
-                 :username username
-                 :password password
-                 :source-id source-id))
+                           (search "ALL") (tls :starttls) source-id)
+  "TLS defaults to STARTTLS (port 143) or implicit TLS on 993 when :TLS T.
+   USERNAME/PASSWORD without TLS/STARTTLS is refused."
+  (let* ((mode (%imap-tls-mode tls))
+         (source (make-instance 'imap-source
+                                :client client
+                                :mailbox (or mailbox "INBOX")
+                                :search (or search "ALL")
+                                :host host
+                                :port (or port (%default-imap-port mode))
+                                :username username
+                                :password password
+                                :tls tls
+                                :source-id source-id)))
+    (when (and (or username password) (not (imap-secure-p source)))
+      (%assert-imap-not-plaintext source))
+    source))
 
 (defmethod ingest-source-id ((source imap-source))
   (or (ingest-source-assigned-id source)
@@ -214,11 +245,14 @@
 
 (defun %ensure-imap-client (source)
   (or (imap-source-client source)
-      (let ((client (mail:make-imap-client
-                     :host (or (imap-source-host source) "localhost")
-                     :port (imap-source-port source))))
-        (setf (imap-source-client source) client)
-        client)))
+      (progn
+        (%assert-imap-not-plaintext source)
+        (let ((client (mail:make-imap-client
+                       :host (or (imap-source-host source) "localhost")
+                       :port (or (imap-source-port source)
+                                 (%default-imap-port (imap-tls-mode source))))))
+          (setf (imap-source-client source) client)
+          client))))
 
 (defun %message-text (msg)
   (cond
@@ -341,6 +375,7 @@
     (when (eq (mail:imap-client-state client) :disconnected)
       (mail:imap-connect client)
       (when (imap-source-username source)
+        (%assert-imap-not-plaintext source)
         (mail:imap-login client
                          (imap-source-username source)
                          (imap-source-password source))))

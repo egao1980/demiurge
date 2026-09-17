@@ -14,19 +14,85 @@
       (funcall *readyz-fn* domain)
       (domain-ready-p domain)))
 
-(defun %slurp-body (env)
-  (let ((raw (getf env :raw-body)))
+(defun loopback-address-p (host)
+  (let ((s (string-downcase (string (or host "")))))
+    (or (string= s "127.0.0.1")
+        (string= s "localhost")
+        (string= s "::1")
+        (string= s "[::1]")
+        (string= s "0:0:0:0:0:0:0:1"))))
+
+(defun check-serve-security (host profile &key insecure-local)
+  "Non-loopback HTTP needs corporate authn+authz or explicit insecure-local.
+   Corporate profiles must already hold a strong session secret."
+  (when (corporate-profile-p profile)
+    (assert-strong-session-secret (corporate-profile-session-secret profile)))
+  (unless (or (loopback-address-p host)
+              insecure-local
+              (and (corporate-profile-p profile)
+                   (corporate-profile-insecure-local-p profile))
+              (corporate-profile-p profile))
+    (error 'serve-error
+           :message
+           "non-loopback HTTP requires corporate auth or --insecure-local"))
+  t)
+
+(defun %env-header (env name)
+  (let ((headers (getf env :headers)))
     (cond
-      ((null raw) "")
-      ((stringp raw) raw)
-      ((and (vectorp raw) (not (stringp raw)))
-       (map 'string #'code-char raw))
-      ((streamp raw)
-       (with-output-to-string (o)
-         (loop for c = (read-char raw nil nil)
-               while c
-               do (write-char c o))))
-      (t (princ-to-string raw)))))
+      ((hash-table-p headers)
+       (or (gethash name headers)
+           (gethash (string-downcase name) headers)))
+      ((listp headers)
+       (or (getf headers (intern (string-upcase (substitute #\- #\_ name))
+                                 :keyword))
+           (cdr (assoc name headers :test #'string-equal))))
+      (t nil))))
+
+(defun %request-content-type (env)
+  (or (getf env :content-type)
+      (%env-header env "content-type")))
+
+(defun %json-content-type-p (ct)
+  (let ((s (string-downcase (string-trim '(#\Space) (or ct "")))))
+    (or (string= s "application/json")
+        (and (>= (length s) 16)
+             (string= s "application/json" :end1 16)
+             (or (= (length s) 16)
+                 (find (char s 16) '(#\Space #\;)))))))
+
+(defun %content-length (env)
+  (let ((raw (or (getf env :content-length)
+                 (%env-header env "content-length"))))
+    (cond
+      ((integerp raw) raw)
+      ((stringp raw) (parse-integer raw :junk-allowed t))
+      (t nil))))
+
+(defun %request-too-large-p (env &optional (limit *max-request-bytes*))
+  (let ((n (%content-length env)))
+    (and n (> n limit))))
+
+(defun %slurp-body (env &key (limit *max-request-bytes*))
+  (let ((raw (getf env :raw-body)))
+    (flet ((bounded (seq)
+             (when (and limit (> (length seq) limit))
+               (error 'request-too-large :limit limit :size (length seq)))
+             seq))
+      (cond
+        ((null raw) "")
+        ((stringp raw) (bounded raw))
+        ((and (vectorp raw) (not (stringp raw)))
+         (bounded (map 'string #'code-char raw)))
+        ((streamp raw)
+         (with-output-to-string (o)
+           (loop for n from 1
+                 for c = (read-char raw nil nil)
+                 while c
+                 do (when (and limit (> n limit))
+                      (error 'request-too-large :limit limit :size n))
+                    (write-char c o))))
+        (t (bounded (princ-to-string raw)))))))
 
 (defun %observe-symbol (name)
   (let ((pkg (find-package :demiurge/observe)))
@@ -74,20 +140,38 @@
        '(503 (:content-type "text/plain; charset=utf-8") ("not ready"))))))
 
 (defun %feedback-response (domain env)
-  (let* ((body (%slurp-body env))
-         (parsed (if (plusp (length body))
-                     (handler-case (ag-ui:decode-json body)
-                       (error () body))
-                     nil))
-         (event (cond
-                  ((and (hash-table-p parsed)
-                        (equal (gethash "type" parsed) "CUSTOM"))
-                   (handler-case (ag-ui:decode-ag-ui-event parsed)
-                     (error () parsed)))
-                  (t parsed))))
-    (handle-feedback-event domain (or event parsed))
-    '(200 (:content-type "application/json; charset=utf-8")
-      ("{\"ok\":true}"))))
+  (handler-case
+      (progn
+        (unless (%json-content-type-p (%request-content-type env))
+          (return-from %feedback-response
+            '(415 (:content-type "text/plain; charset=utf-8")
+              ("content-type must be application/json"))))
+        (when (%request-too-large-p env)
+          (return-from %feedback-response
+            '(413 (:content-type "text/plain; charset=utf-8")
+              ("payload too large"))))
+        (let* ((body (%slurp-body env :limit *max-request-bytes*))
+               (parsed (cond
+                         ((zerop (length body))
+                          (error 'invalid-feedback :message "empty body"))
+                         (t (ag-ui:decode-json body))))
+               (event (cond
+                        ((and (hash-table-p parsed)
+                              (equal (gethash "type" parsed) "CUSTOM"))
+                         (ag-ui:decode-ag-ui-event parsed))
+                        (t parsed))))
+          (handle-feedback-event domain event)
+          '(200 (:content-type "application/json; charset=utf-8")
+            ("{\"ok\":true}"))))
+    (request-too-large ()
+      '(413 (:content-type "text/plain; charset=utf-8")
+        ("payload too large")))
+    (invalid-feedback (c)
+      `(400 (:content-type "text/plain; charset=utf-8")
+            (,(or (demiurge-error-message c) "malformed feedback"))))
+    (error (c)
+      `(400 (:content-type "text/plain; charset=utf-8")
+            (,(format nil "malformed feedback: ~A" c))))))
 
 (defun %rewrite-path (env path)
   (let ((copy (copy-list env)))
@@ -129,6 +213,10 @@
                  (%healthz-response))
                 ((string= path "/readyz")
                  (%readyz-response domain profile))
+                ((and (member method '(:post :put :patch) :test #'eq)
+                      (%request-too-large-p env))
+                 '(413 (:content-type "text/plain; charset=utf-8")
+                   ("payload too large")))
                 ((and (string= path "/feedback") (eq method :post))
                  (%feedback-response domain env))
                 ((string= path "/mcp")
@@ -162,27 +250,30 @@
 
 (defun serve-expert (domain &key (transports '(:stdio :http))
                               (host "127.0.0.1") (port 8080)
-                              profile (start t))
+                              profile (start t) insecure-local)
   "Assemble the expert app. START T begins stdio-MCP and/or HTTP when
-   the transport backends are loaded."
+   the transport backends are loaded. Non-loopback HTTP requires a
+   corporate profile or INSECURE-LOCAL."
   (check-type domain expert-domain)
   (let* ((profile (or profile (expert-profile domain)))
-         (app (make-expert-app domain profile))
-         (mcp (make-expert-mcp-server domain))
          (wanted (if (listp transports)
                      transports
-                     (list transports)))
-         (started '()))
-    (when start
-      (when (member :http wanted :test #'eq)
-        (%start-http app host port)
-        (push :http started))
-      (when (and (member :stdio wanted :test #'eq)
-                 (not (member :http started)))
-        (%start-stdio mcp)
-        (push :stdio started)))
-    (make-instance 'serve-session
-                   :domain domain
-                   :app app
-                   :mcp mcp
-                   :transports (or started wanted))))
+                     (list transports))))
+    (when (member :http wanted :test #'eq)
+      (check-serve-security host profile :insecure-local insecure-local))
+    (let* ((app (make-expert-app domain profile))
+           (mcp (make-expert-mcp-server domain))
+           (started '()))
+      (when start
+        (when (member :http wanted :test #'eq)
+          (%start-http app host port)
+          (push :http started))
+        (when (and (member :stdio wanted :test #'eq)
+                   (not (member :http started)))
+          (%start-stdio mcp)
+          (push :stdio started)))
+      (make-instance 'serve-session
+                     :domain domain
+                     :app app
+                     :mcp mcp
+                     :transports (or started wanted)))))

@@ -540,3 +540,24 @@
                  (length (list-stored-chunks store)))
               "replay keeps prior chunk ids")
           (ok (= 3 (length (getf result :hashes)))))))))
+
+(deftest imap-source-defaults-to-starttls-refuses-plaintext
+  (let ((src (make-imap-source :host "mail.example" :mailbox "INBOX")))
+    (ok (eq :starttls (imap-tls-mode src)))
+    (ok (imap-secure-p src))
+    (ok (eql 143 (imap-source-port src))))
+  (let ((imaps (make-imap-source :host "mail.example" :tls t)))
+    (ok (eq :tls (imap-tls-mode imaps)))
+    (ok (eql 993 (imap-source-port imaps))))
+  (ok (signals (make-imap-source :host "mail.example"
+                                 :username "alice"
+                                 :password "s3cret"
+                                 :tls nil)
+               'imap-plaintext-refused))
+  (let ((plain (make-instance 'imap-source
+                              :host "mail.example"
+                              :tls nil
+                              :username "alice"
+                              :password "s3cret")))
+    (ok (not (imap-secure-p plain)))
+    (ok (signals (enumerate-items plain) 'imap-plaintext-refused))))

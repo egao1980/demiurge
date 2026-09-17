@@ -31,6 +31,14 @@ client-id = \"\"
 [corporate.ldap]
 url = \"\"
 base-dn = \"\"
+
+[corporate.session]
+secret = \"\"
+kid = \"\"
+previous-secret = \"\"
+previous-kid = \"\"
+issuer = \"\"
+audience = \"\"
 ")
 
 (defclass demiurge-config ()
@@ -105,6 +113,34 @@ base-dn = \"\"
    (corporate-role-grants
     :initarg :corporate-role-grants
     :accessor demiurge-config-corporate-role-grants
+    :initform nil)
+   (corporate-session-secret
+    :initarg :corporate-session-secret
+    :accessor demiurge-config-corporate-session-secret
+    :initform nil)
+   (corporate-session-kid
+    :initarg :corporate-session-kid
+    :accessor demiurge-config-corporate-session-kid
+    :initform nil)
+   (corporate-session-previous-secret
+    :initarg :corporate-session-previous-secret
+    :accessor demiurge-config-corporate-session-previous-secret
+    :initform nil)
+   (corporate-session-previous-kid
+    :initarg :corporate-session-previous-kid
+    :accessor demiurge-config-corporate-session-previous-kid
+    :initform nil)
+   (corporate-session-issuer
+    :initarg :corporate-session-issuer
+    :accessor demiurge-config-corporate-session-issuer
+    :initform nil)
+   (corporate-session-audience
+    :initarg :corporate-session-audience
+    :accessor demiurge-config-corporate-session-audience
+    :initform nil)
+   (corporate-insecure-local
+    :initarg :corporate-insecure-local
+    :accessor demiurge-config-corporate-insecure-local
     :initform nil)
    (raw
     :initarg :raw
@@ -258,6 +294,20 @@ base-dn = \"\"
                  :corporate-otlp-endpoint (%cfg-string stack "corporate.otlp.endpoint" nil)
                  :corporate-tenant-id (%cfg-string stack "corporate.tenant.id" nil)
                  :corporate-role-grants (%cfg-role-grants stack)
+                 :corporate-session-secret
+                 (%cfg-string stack "corporate.session.secret" nil)
+                 :corporate-session-kid
+                 (%cfg-string stack "corporate.session.kid" nil)
+                 :corporate-session-previous-secret
+                 (%cfg-string stack "corporate.session.previous-secret" nil)
+                 :corporate-session-previous-kid
+                 (%cfg-string stack "corporate.session.previous-kid" nil)
+                 :corporate-session-issuer
+                 (%cfg-string stack "corporate.session.issuer" nil)
+                 :corporate-session-audience
+                 (%cfg-string stack "corporate.session.audience" nil)
+                 :corporate-insecure-local
+                 (%cfg-bool stack "corporate.insecure-local" nil)
                  :raw stack))
 
 (defun %write-default-toml (path)

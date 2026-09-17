@@ -49,3 +49,9 @@
   (:report (lambda (c s)
              (format s "ingest requires a configured rag store~@[: ~A~]"
                      (demiurge-error-message c)))))
+
+(define-condition imap-plaintext-refused (ingest-source-error)
+  ()
+  (:report (lambda (c s)
+             (format s "IMAP plaintext login refused~@[: ~A~]"
+                     (demiurge-error-message c)))))

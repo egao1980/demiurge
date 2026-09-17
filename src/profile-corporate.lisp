@@ -47,7 +47,22 @@
                    :initform nil)
    (session-secret :initarg :session-secret
                    :accessor corporate-profile-session-secret
-                   :initform "demiurge-corporate-dev")
+                   :initform nil)
+   (session-kid :initarg :session-kid
+                :accessor corporate-profile-session-kid
+                :initform "k1")
+   (session-keys :initarg :session-keys
+                 :accessor corporate-profile-session-keys
+                 :initform nil)
+   (session-issuer :initarg :session-issuer
+                   :accessor corporate-profile-session-issuer
+                   :initform "demiurge")
+   (session-audience :initarg :session-audience
+                     :accessor corporate-profile-session-audience
+                     :initform "demiurge-session")
+   (insecure-local-p :initarg :insecure-local-p
+                     :accessor corporate-profile-insecure-local-p
+                     :initform nil)
    (ldap-directory :initarg :ldap-directory
                    :accessor corporate-profile-ldap-directory
                    :initform nil)
@@ -505,16 +520,24 @@
                             :version-table
                             (format nil "~a_sql_migrate_version" ident)))))
     (when (and dir reg mig-class)
-      (funcall reg dir
-               (make-instance mig-class
-                              :name "tenant-schema"
-                              :revision "0001"
-                              :down-revision nil
-                              :ops nil))
       (let ((sess (find-symbol "MAKE-SESSION-REVISION" :conversation-backend-sql))
             (jour (find-symbol "MAKE-JOURNAL-REVISION" :task-backend-sql)))
-        (when (and sess (fboundp sess)) (funcall sess dir))
-        (when (and jour (fboundp jour)) (funcall jour dir))))
+        ;; Session/journal helpers already register revision 0001. A second
+        ;; placeholder 0001 is a duplicate when those systems are loaded.
+        (if (and sess (fboundp sess))
+            (funcall sess dir)
+            (funcall reg dir
+                     (make-instance mig-class
+                                    :name "tenant-schema"
+                                    :revision "0001"
+                                    :down-revision nil
+                                    :ops nil)))
+        (when (and jour (fboundp jour))
+          (let ((migrate-error (find-symbol "MIGRATE-ERROR" :sql-migrate)))
+            (handler-case (funcall jour dir)
+              (error (c)
+                (unless (and migrate-error (typep c migrate-error))
+                  (error c))))))))
     (when (and conn dir)
       (ignore-errors
         (sql-protocol:execute
@@ -581,23 +604,132 @@
                    :endpoint (and cfg (demiurge-config-corporate-otlp-endpoint cfg))
                    :force-recording force-recording))))))
 
+(defconstant +min-session-secret-length+ 32
+  "HS256 session secrets must be at least 256 bits (32 octets).")
+
+(defparameter +forbidden-session-secrets+
+  '("demiurge-corporate-dev" "changeme" "secret" "password")
+  "Known default / placeholder secrets that must never ship.")
+
+(defparameter +default-session-issuer+ "demiurge")
+(defparameter +default-session-audience+ "demiurge-session")
+(defparameter +default-session-kid+ "k1")
+
+(defvar *session-secret-environ* :process
+  "Where to read session-secret env vars.
+   :PROCESS → UIOP:GETENV; an alist → those pairs; NIL → no env.")
+
+(defun %env-lookup (name)
+  (cond
+    ((eq *session-secret-environ* :process)
+     (uiop:getenv name))
+    ((listp *session-secret-environ*)
+     (cdr (assoc name *session-secret-environ* :test #'string=)))
+    (t nil)))
+
+(defun %nonempty-secret (value)
+  (and value (plusp (length (string value))) (string value)))
+
+(defun session-secret-weakness (secret)
+  "Keyword classifying SECRET, or NIL when it is acceptable."
+  (let ((s (and secret (string secret))))
+    (cond
+      ((or (null s) (zerop (length (string-trim '(#\Space #\Tab #\Newline) s))))
+       :missing)
+      ((find s +forbidden-session-secrets+ :test #'string=) :default)
+      ((< (length s) +min-session-secret-length+) :short)
+      (t nil))))
+
+(defun strong-session-secret-p (secret)
+  (null (session-secret-weakness secret)))
+
+(defun assert-strong-session-secret (secret)
+  "Signal WEAK-SESSION-SECRET unless SECRET is strong. USE-VALUE to supply one."
+  (let ((why (session-secret-weakness secret)))
+    (if (null why)
+        (string secret)
+        (restart-case
+            (error 'weak-session-secret
+                   :provided why
+                   :message (format nil "refusing corporate startup (~A secret)" why))
+          (use-value (value)
+            :report "Use a supplied session secret"
+            (assert-strong-session-secret value))))))
+
+(defun resolve-session-secret (cfg &optional explicit)
+  "EXPLICIT > CFG > *DEMIURGE-CONFIG* > env. Never falls back to a default."
+  (or (%nonempty-secret explicit)
+      (%nonempty-secret (and cfg (demiurge-config-corporate-session-secret cfg)))
+      (%nonempty-secret (and *demiurge-config*
+                             (not (eq cfg *demiurge-config*))
+                             (demiurge-config-corporate-session-secret
+                              *demiurge-config*)))
+      (%nonempty-secret (%env-lookup "DEMIURGE_CORPORATE__SESSION__SECRET"))
+      (%nonempty-secret (%env-lookup "DEMIURGE_SESSION_SECRET"))))
+
+(defun %session-keys-from (kid secret prev-kid prev-secret extra)
+  (let ((keys (copy-list extra)))
+    (when (and prev-kid prev-secret (plusp (length (string prev-secret))))
+      (push (cons (string prev-kid) (string prev-secret)) keys))
+    (push (cons (or kid +default-session-kid+) secret) keys)
+    (remove-duplicates keys :key #'car :test #'equal)))
+
+(defmethod initialize-instance :after ((profile corporate-profile) &key)
+  (setf (corporate-profile-session-secret profile)
+        (assert-strong-session-secret (corporate-profile-session-secret profile)))
+  (unless (corporate-profile-session-kid profile)
+    (setf (corporate-profile-session-kid profile) +default-session-kid+))
+  (unless (corporate-profile-session-issuer profile)
+    (setf (corporate-profile-session-issuer profile) +default-session-issuer+))
+  (unless (corporate-profile-session-audience profile)
+    (setf (corporate-profile-session-audience profile) +default-session-audience+))
+  (unless (corporate-profile-session-keys profile)
+    (setf (corporate-profile-session-keys profile)
+          (list (cons (corporate-profile-session-kid profile)
+                      (corporate-profile-session-secret profile))))))
+
 (defun make-corporate-profile (&key data-dir config journal session-store
                                  chunker rag-store llm-catalog default-model
                                  skill-store (require-hitl-p nil)
                                  tenant
                                  oidc-discovery oidc-jwks oidc-http oidc-key
                                  oidc-algorithms token-exchange session-secret
+                                 session-kid session-keys session-issuer
+                                 session-audience previous-secret previous-kid
+                                 insecure-local-p
                                  ldap-directory group-role-map role-grants
                                  (force-recording nil))
   "Postgres sessions/journal/pgvector when DSN present; else sqlite/memory.
-   Applies corporate observability (FORCE-RECORDING for tests)."
+   Applies corporate observability (FORCE-RECORDING for tests).
+   SESSION-SECRET must be a strong external value (arg / config / env)."
   (let* ((cfg (or config (current-demiurge-config)))
          (root (uiop:ensure-directory-pathname
                 (or data-dir (%default-data-dir cfg))))
          (tenant (or tenant
                      (demiurge-config-corporate-tenant-id cfg)
                      "default"))
-         (*tenant* tenant))
+         (*tenant* tenant)
+         (secret (assert-strong-session-secret
+                  (resolve-session-secret cfg session-secret)))
+         (kid (or session-kid
+                  (and cfg (demiurge-config-corporate-session-kid cfg))
+                  +default-session-kid+))
+         (prev-secret (or previous-secret
+                          (and cfg (demiurge-config-corporate-session-previous-secret cfg))))
+         (prev-kid (or previous-kid
+                       (and cfg (demiurge-config-corporate-session-previous-kid cfg))
+                       "k0"))
+         (keys (or session-keys
+                   (%session-keys-from kid secret prev-kid prev-secret nil)))
+         (issuer (or session-issuer
+                     (and cfg (demiurge-config-corporate-session-issuer cfg))
+                     +default-session-issuer+))
+         (audience (or session-audience
+                       (and cfg (demiurge-config-corporate-session-audience cfg))
+                       +default-session-audience+))
+         (insecure (if insecure-local-p
+                       t
+                       (and cfg (demiurge-config-corporate-insecure-local cfg)))))
     (ensure-directories-exist root)
     (%apply-corporate-observe cfg :force-recording force-recording)
     (let* ((dsn (demiurge-config-corporate-postgres-dsn cfg))
@@ -628,7 +760,12 @@
                      :oidc-key oidc-key
                      :oidc-algorithms (or oidc-algorithms '("RS256"))
                      :token-exchange token-exchange
-                     :session-secret (or session-secret "demiurge-corporate-dev")
+                     :session-secret secret
+                     :session-kid kid
+                     :session-keys keys
+                     :session-issuer issuer
+                     :session-audience audience
+                     :insecure-local-p (and insecure t)
                      :ldap-directory ldap-directory
                      :group-role-map (or group-role-map
                                          (demiurge-config-corporate-ldap-group-role-map cfg))
@@ -723,26 +860,102 @@
                     (oauth2:fetch-oidc-discovery issuer :http http)
                     (oauth2:fetch-oidc-discovery issuer)))))))
 
+(defun %jwt-claim (claims key)
+  (or (cdr (assoc key claims :test #'string=))
+      (cdr (assoc key claims :test #'equalp))))
+
+(defun %claim-unix (claims key)
+  (let ((v (%jwt-claim claims key)))
+    (cond
+      ((integerp v) v)
+      ((and (realp v) (not (complexp v))) (truncate v))
+      ((stringp v) (parse-integer v :junk-allowed t))
+      (t nil))))
+
+(defun %aud-matches-p (expected aud)
+  (let ((want (string expected)))
+    (cond
+      ((null aud) nil)
+      ((stringp aud) (string= want aud))
+      ((or (vectorp aud) (listp aud))
+       (some (lambda (x) (string= want (string x))) (coerce aud 'list)))
+      (t nil))))
+
+(defun %session-key-for-kid (profile kid)
+  (let* ((keys (corporate-profile-session-keys profile))
+         (from-keys (and kid (cdr (assoc kid keys :test #'equal)))))
+    (or from-keys
+        (and (or (null kid)
+                 (equal kid (corporate-profile-session-kid profile)))
+             (corporate-profile-session-secret profile)))))
+
+(defun %session-claims-valid-p (profile claims &key (now (jwt:unix-time)))
+  "Require exp/iat/nbf + matching iss/aud. Missing or stale → NIL."
+  (let ((exp (%claim-unix claims "exp"))
+        (iat (%claim-unix claims "iat"))
+        (nbf (%claim-unix claims "nbf"))
+        (iss (%jwt-claim claims "iss"))
+        (aud (%jwt-claim claims "aud"))
+        (want-iss (or (corporate-profile-session-issuer profile)
+                      +default-session-issuer+))
+        (want-aud (or (corporate-profile-session-audience profile)
+                      +default-session-audience+)))
+    (and (numberp exp) (< now exp)
+         (numberp iat) (<= iat now)
+         (numberp nbf) (<= nbf now)
+         (stringp iss) (string= (string iss) (string want-iss))
+         (%aud-matches-p want-aud aud))))
+
+(defun encode-session-cookie (profile subject &key tenant roles
+                                         (now (jwt:unix-time))
+                                         (ttl 86400)
+                                         exp iat nbf iss aud)
+  "Compact JWT for the session cookie. Signed with the current kid."
+  (let ((kid (or (corporate-profile-session-kid profile) +default-session-kid+))
+        (secret (corporate-profile-session-secret profile)))
+    (jwt:encode
+     :hs256 secret
+     `(("sub" . ,subject)
+       ("tenant" . ,(or tenant (profile-tenant profile) "default"))
+       ("roles" . ,(coerce (or roles #()) 'vector))
+       ("iat" . ,(or iat now))
+       ("nbf" . ,(or nbf now))
+       ("exp" . ,(or exp (+ now ttl)))
+       ("iss" . ,(or iss
+                     (corporate-profile-session-issuer profile)
+                     +default-session-issuer+))
+       ("aud" . ,(or aud
+                     (corporate-profile-session-audience profile)
+                     +default-session-audience+)))
+     :headers `(("kid" . ,kid)))))
+
+(defun decode-session-cookie (profile token)
+  "Verify signature (current or previous kid) and claims. NIL if rejected."
+  (when (and token (plusp (length (string token))))
+    (handler-case
+        (multiple-value-bind (unverified-claims header)
+            (jwt:inspect-token token)
+          (declare (ignore unverified-claims))
+          (let* ((kid (%jwt-claim header "kid"))
+                 (key (%session-key-for-kid profile kid)))
+            (unless key
+              (return-from decode-session-cookie nil))
+            (multiple-value-bind (claims hdr)
+                (jwt:decode :hs256 key token)
+              (declare (ignore hdr))
+              (when (%session-claims-valid-p profile claims)
+                (list :subject (%jwt-claim claims "sub")
+                      :tenant (or (%jwt-claim claims "tenant")
+                                  (profile-tenant profile))
+                      :roles (%as-string-list (%jwt-claim claims "roles"))
+                      :kid kid)))))
+      (error () nil))))
+
 (defun %encode-session-cookie (profile subject tenant roles)
-  (jwt:encode
-   :hs256 (corporate-profile-session-secret profile)
-   `(("sub" . ,subject)
-     ("tenant" . ,(or tenant "default"))
-     ("roles" . ,(coerce (or roles #()) 'vector))
-     ("exp" . ,(+ (jwt:unix-time) 86400)))))
+  (encode-session-cookie profile subject :tenant tenant :roles roles))
 
 (defun %decode-session-cookie (profile token)
-  (when (and token (plusp (length token)))
-    (handler-case
-        (multiple-value-bind (claims header)
-            (jwt:decode :hs256 (corporate-profile-session-secret profile) token)
-          (declare (ignore header))
-          (list :subject (cdr (assoc "sub" claims :test #'string=))
-                :tenant (or (cdr (assoc "tenant" claims :test #'string=))
-                            (profile-tenant profile))
-                :roles (%as-string-list
-                        (cdr (assoc "roles" claims :test #'string=)))))
-      (error () nil))))
+  (decode-session-cookie profile token))
 
 (defun %session-from-request (env profile)
   (let ((raw (%cookie env "demiurge_session")))
@@ -756,8 +969,15 @@
            (or (getf sess :tenant) (profile-tenant profile)))
           sess)))))
 
-(defun %set-cookie-header (token)
-  (format nil "demiurge_session=~a; Path=/; HttpOnly; SameSite=Lax" token))
+(defun session-cookie-header (token &key (secure t))
+  "HttpOnly + SameSite=Lax. SECURE T (production) adds the Secure attribute."
+  (format nil "demiurge_session=~a; Path=/; HttpOnly; SameSite=Lax~:[~;; Secure~]"
+          token secure))
+
+(defun %set-cookie-header (token &optional profile)
+  (session-cookie-header
+   token
+   :secure (not (and profile (corporate-profile-insecure-local-p profile)))))
 
 (defun %redirect (location &optional set-cookie)
   (if set-cookie
@@ -839,11 +1059,12 @@
                          "default"))
              (roles (resolve-principal-roles profile sub claims))
              (cookie (%encode-session-cookie profile sub tenant roles)))
-        (%redirect "/" (%set-cookie-header cookie))))))
+        (%redirect "/" (%set-cookie-header cookie profile))))))
 
 (defun wrap-corporate-auth (app profile)
   "OIDC login middleware. /healthz and /readyz stay unauthenticated.
-   Session cookie holds subject + tenant."
+   Session cookie holds subject + tenant. Refuses a weak session secret."
+  (assert-strong-session-secret (corporate-profile-session-secret profile))
   (lambda (env)
     (let ((path (or (getf env :path-info) "/")))
       (cond

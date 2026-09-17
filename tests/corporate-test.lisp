@@ -56,8 +56,14 @@ base-dn = \"dc=example,dc=com\"
 [corporate.role-grants]
 reader = [\"lookup-symbol\", \"search-corpus\"]
 admin = [\"lookup-symbol\", \"search-corpus\", \"run-tests\"]
+
+[corporate.session]
+secret = ~S
+kid = \"k1\"
+issuer = \"demiurge\"
+audience = \"demiurge-session\"
 "
-                        dsn tenant issuer client)))
+                        dsn tenant issuer client (%corporate-hs-key))))
          (demiurge::*demiurge-config* nil))
     (load-demiurge-config :path path :env nil)))
 
@@ -118,7 +124,9 @@ admin = [\"lookup-symbol\", \"search-corpus\", \"run-tests\"]
     (ok (find "lookup-symbol"
               (cdr (assoc "reader" (demiurge-config-corporate-role-grants cfg)
                           :test #'string-equal))
-              :test #'string-equal))))
+              :test #'string-equal))
+    (ok (equal (%corporate-hs-key) (demiurge-config-corporate-session-secret cfg)))
+    (ok (equal "k1" (demiurge-config-corporate-session-kid cfg)))))
 
 (deftest corporate-config-env-override
   (let* ((path (%write-tmp-toml "
@@ -272,7 +280,9 @@ issuer = \"https://file.example\"
                                          (format nil "demiurge_session=~a" raw))
                                    ht)))))
             (ok (= 404 (first authed))
-                "authenticated GET /feedback is 404, not a login redirect")))))))
+                "authenticated GET /feedback is 404, not a login redirect")
+            (ok (search "Secure" cookie)
+                "production session cookie is Secure")))))))
 
 (deftest corporate-tenant-isolation-error
   (with-tenant "acme"
@@ -306,3 +316,174 @@ issuer = \"https://file.example\"
 
 (deftest corporate-compose-readyz-skipped-without-docker
   (ok t "docker compose corporate profile is a manual/CI-compose check; default CI does not require Docker"))
+
+(defun %bare-corporate-keys (&key session-secret)
+  (append
+   (list :data-dir "/tmp/demiurge-h3-unused"
+         :config (make-instance 'demiurge-config)
+         :journal (task-protocol:make-in-memory-journal)
+         :session-store (conv:make-in-memory-conversation-store)
+         :rag-store (rag-backend-memory:make-memory-vector-store)
+         :chunker (rag-backend-text:make-recursive-character-chunker
+                   :size 200 :overlap 20))
+   (when session-secret (list :session-secret session-secret))))
+
+(deftest corporate-rejects-default-missing-weak-secret
+  "H7 gate 5: default/missing/weak secrets are rejected at startup."
+  (let ((*session-secret-environ* nil)
+        (demiurge::*demiurge-config* nil))
+    (ok (signals (apply #'make-corporate-profile (%bare-corporate-keys))
+                 'weak-session-secret)
+        "missing secret")
+    (ok (signals (apply #'make-corporate-profile
+                        (%bare-corporate-keys
+                         :session-secret "demiurge-corporate-dev"))
+                 'weak-session-secret)
+        "default secret")
+    (ok (signals (apply #'make-corporate-profile
+                        (%bare-corporate-keys :session-secret ""))
+                 'weak-session-secret)
+        "empty secret")
+    (ok (signals (apply #'make-corporate-profile
+                        (%bare-corporate-keys :session-secret "short"))
+                 'weak-session-secret)
+        "short secret")
+    (ok (signals (make-instance 'corporate-profile)
+                 'weak-session-secret)
+        "make-instance without secret")))
+
+(deftest corporate-accepts-config-and-env-secret
+  (with-tmp-dir (tmp)
+    (let* ((cfg (%corporate-cfg))
+           (profile (make-corporate-profile
+                     :data-dir tmp
+                     :config cfg
+                     :force-recording t
+                     :journal (task-protocol:make-in-memory-journal)
+                     :session-store (conv:make-in-memory-conversation-store)
+                     :rag-store (rag-backend-memory:make-memory-vector-store)
+                     :chunker (rag-backend-text:make-recursive-character-chunker
+                               :size 200 :overlap 20))))
+      (ok (corporate-profile-p profile))
+      (ok (equal (%corporate-hs-key)
+                 (corporate-profile-session-secret profile))))
+    (let ((*session-secret-environ*
+           `(("DEMIURGE_CORPORATE__SESSION__SECRET" . ,(%corporate-hs-key))))
+          (demiurge::*demiurge-config* nil))
+      (with-tmp-dir (tmp)
+        (let ((profile (make-corporate-profile
+                        :data-dir tmp
+                        :config (make-instance 'demiurge-config)
+                        :force-recording t
+                        :journal (task-protocol:make-in-memory-journal)
+                        :session-store (conv:make-in-memory-conversation-store)
+                        :rag-store (rag-backend-memory:make-memory-vector-store)
+                        :chunker (rag-backend-text:make-recursive-character-chunker
+                                  :size 200 :overlap 20))))
+          (ok (equal (%corporate-hs-key)
+                     (corporate-profile-session-secret profile))))))))
+
+(deftest corporate-session-rejects-expired-tampered-and-incomplete
+  "H7 gate 5: expired/tampered/incomplete tokens are not sessions."
+  (with-tmp-dir (tmp)
+    (let* ((profile (%memory-corporate tmp :config (%corporate-cfg)))
+           (now (jwt:unix-time))
+           (good (encode-session-cookie profile "alice"
+                                        :tenant "acme" :roles '("reader")
+                                        :now now)))
+      (ok (equal "alice" (getf (decode-session-cookie profile good) :subject)))
+      (let ((expired (encode-session-cookie profile "alice"
+                                            :tenant "acme"
+                                            :now (- now 120)
+                                            :exp (- now 10))))
+        (ok (null (decode-session-cookie profile expired))
+            "expired exp rejected"))
+      (let ((future-nbf (encode-session-cookie profile "alice"
+                                               :tenant "acme"
+                                               :now now
+                                               :nbf (+ now 3600))))
+        (ok (null (decode-session-cookie profile future-nbf))
+            "future nbf rejected"))
+      (let ((bad-iss (encode-session-cookie profile "alice"
+                                            :tenant "acme"
+                                            :iss "other-issuer")))
+        (ok (null (decode-session-cookie profile bad-iss))
+            "iss mismatch rejected"))
+      (let ((bad-aud (encode-session-cookie profile "alice"
+                                            :tenant "acme"
+                                            :aud "other-aud")))
+        (ok (null (decode-session-cookie profile bad-aud))
+            "aud mismatch rejected"))
+      (let ((no-iat (jwt:encode
+                     :hs256 (%corporate-hs-key)
+                     `(("sub" . "alice")
+                       ("tenant" . "acme")
+                       ("roles" . #())
+                       ("nbf" . ,now)
+                       ("exp" . ,(+ now 3600))
+                       ("iss" . "demiurge")
+                       ("aud" . "demiurge-session"))
+                     :headers '(("kid" . "k1")))))
+        (ok (null (decode-session-cookie profile no-iat))
+            "missing iat rejected"))
+      (let* ((tampered (copy-seq good))
+             (dot (position #\. tampered :from-end t)))
+        (setf (char tampered (1- (length tampered)))
+              (if (char= (char tampered (1- (length tampered))) #\A)
+                  #\B #\A))
+        (ok (null (decode-session-cookie profile tampered))
+            "tampered signature rejected")
+        (ok (numberp dot))))))
+
+(deftest corporate-session-kid-rotation-and-secure-cookie
+  "H7 gate 5: previous kid accepted; Secure policy is explicit."
+  (with-tmp-dir (tmp)
+    (let* ((prev "previous-secret-12345678901234567")
+           (profile (%memory-corporate tmp :config (%corporate-cfg)))
+           (now (jwt:unix-time)))
+      (setf (corporate-profile-session-keys profile)
+            (list (cons "k1" (%corporate-hs-key))
+                  (cons "k0" prev)))
+      (let ((old (jwt:encode
+                  :hs256 prev
+                  `(("sub" . "alice")
+                    ("tenant" . "acme")
+                    ("roles" . #())
+                    ("iat" . ,now)
+                    ("nbf" . ,now)
+                    ("exp" . ,(+ now 3600))
+                    ("iss" . "demiurge")
+                    ("aud" . "demiurge-session"))
+                  :headers '(("kid" . "k0")))))
+        (ok (equal "alice" (getf (decode-session-cookie profile old) :subject))
+            "previous kid still verifies"))
+      (let ((unknown (jwt:encode
+                      :hs256 "unknown-secret-123456789012345678"
+                      `(("sub" . "eve")
+                        ("tenant" . "acme")
+                        ("roles" . #())
+                        ("iat" . ,now)
+                        ("nbf" . ,now)
+                        ("exp" . ,(+ now 3600))
+                        ("iss" . "demiurge")
+                        ("aud" . "demiurge-session"))
+                      :headers '(("kid" . "k99")))))
+        (ok (null (decode-session-cookie profile unknown))
+            "unknown kid rejected"))
+      (ok (search "Secure" (session-cookie-header "tok" :secure t)))
+      (ok (not (search "Secure" (session-cookie-header "tok" :secure nil))))
+      (ok (search "Secure" (demiurge::%set-cookie-header "tok" profile))
+          "corporate default cookie is Secure")
+      (setf (corporate-profile-insecure-local-p profile) t)
+      (ok (not (search "Secure" (demiurge::%set-cookie-header "tok" profile)))
+          "insecure-local omits Secure"))))
+
+(deftest corporate-observability-compose-is-loopback
+  (let ((text (uiop:read-file-string
+               (asdf:system-relative-pathname
+                "demiurge" "ops/docker-compose.observability.yml"))))
+    (ok (search "127.0.0.1:3000:3000" text))
+    (ok (search "127.0.0.1:4318:4318" text))
+    (ok (search "GF_AUTH_ANONYMOUS_ENABLED: \"false\"" text))
+    (ok (search "GRAFANA_ADMIN_PASSWORD" text))
+    (ng (search "GF_AUTH_ANONYMOUS_ORG_ROLE: Admin" text))))
