@@ -291,7 +291,10 @@
         "session key is not the KS name")))
 
 (deftest ask-expert-isolates-session-memory
-  (let* ((domain (make-echo-expert :backend (mock-llm) :name "echo-iso"))
+  (let* ((*tenant* nil)
+         (*principal* nil)
+         (*request-session* nil)
+         (domain (make-echo-expert :backend (mock-llm) :name "echo-iso"))
          (ka (request-session-key :principal "anonymous" :tenant nil
                                   :transport :http :conversation-id "conv-a"))
          (kb (request-session-key :principal "anonymous" :tenant nil
@@ -311,7 +314,10 @@
       (ok (not (%turn-mentions tb "alpha"))))))
 
 (deftest concurrent-ask-expert-does-not-leak-context
-  (let* ((domain (make-echo-expert :backend (mock-llm) :name "echo-conc"))
+  (let* ((*tenant* nil)
+         (*principal* nil)
+         (*request-session* nil)
+         (domain (make-echo-expert :backend (mock-llm) :name "echo-conc"))
          (results (make-array 2))
          (t1 (bt:make-thread
               (lambda ()

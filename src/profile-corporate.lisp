@@ -187,8 +187,7 @@
                     (and base (request-session-principal base))
                     *principal*)
      :tenant (or tenant
-                 (and base (request-session-tenant base))
-                 (current-tenant))
+                 (and base (request-session-tenant base)))
      :transport (or transport
                     (and base (request-session-transport base))
                     *request-transport*)
@@ -207,8 +206,7 @@
                         (%session-token *principal*)
                         "anonymous"))
          (tenant (or tenant
-                     (and sess (request-session-tenant sess))
-                     (current-tenant)))
+                     (and sess (request-session-tenant sess))))
          (transport (or (%session-token transport)
                         (and sess (%session-token
                                    (request-session-transport sess)))
