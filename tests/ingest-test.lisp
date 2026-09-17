@@ -319,12 +319,17 @@
                              :test #'equal))
                    (list-stored-chunks store)))))))
 
+(defun %live-domain-without-store (name)
+  "A real deployment profile with no rag-store — not the keyword :personal."
+  (make-expert-domain :name name
+                      :profile (make-instance 'personal-profile)))
+
 (deftest ingest-requires-store-outside-mock-profile
   (with-tmp-dir (tmp)
     (let* ((dir (%write-corpus (merge-pathnames "c/" tmp)
                                '(("a.md" "# A~%alpha"))))
            (source (make-file-source :root dir :pattern "*.md"))
-           (domain (make-expert-domain :name "no-store"))
+           (domain (%live-domain-without-store "no-store"))
            (*ingest-profile* :live))
       (ok (signals (run-ingest domain source
                                :journal (task:make-in-memory-journal)
@@ -337,7 +342,7 @@
     (let* ((dir (%write-corpus (merge-pathnames "c/" tmp)
                                '(("a.md" "# A~%alpha"))))
            (source (make-file-source :root dir :pattern "*.md"))
-           (domain (make-expert-domain :name "store-uv"))
+           (domain (%live-domain-without-store "store-uv"))
            (store (rag:make-mock-vector-store))
            (*ingest-profile* :live)
            (got (handler-bind ((ingest-store-required

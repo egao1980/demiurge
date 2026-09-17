@@ -14,6 +14,15 @@
     (or (eq p :mock)
         (and (stringp p) (string-equal p "mock")))))
 
+(defun %unconfigured-profile-p (domain)
+  "Keyword :PERSONAL (no deployment-profile object) is the legacy CLI path."
+  (let ((prof (and (expert-domain-p domain) (expert-profile domain))))
+    (not (deployment-profile-p prof))))
+
+(defun %ephemeral-mock-allowed-p (domain)
+  (or (mock-ingest-profile-p)
+      (%unconfigured-profile-p domain)))
+
 (defun %journal-for (domain journal)
   (or journal
       (let ((prof (and (expert-domain-p domain) (expert-profile domain))))
@@ -23,7 +32,7 @@
 (defun %embedder-for (domain embedder)
   (or (resolve-profile-llm (and (expert-domain-p domain) (expert-profile domain))
                           embedder)
-      (when (mock-ingest-profile-p)
+      (when (%ephemeral-mock-allowed-p domain)
         (llm:make-mock-llm-backend))
       (tagbody
        :retry
@@ -46,7 +55,7 @@
   (or store
       (let ((prof (and (expert-domain-p domain) (expert-profile domain))))
         (and (deployment-profile-p prof) (profile-rag-store prof)))
-      (when (mock-ingest-profile-p)
+      (when (%ephemeral-mock-allowed-p domain)
         (rag:make-mock-vector-store))
       (tagbody
        :retry
