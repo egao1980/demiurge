@@ -141,6 +141,39 @@
                   "all source hashes present")
               (ok (= (length hashes) 3)))))))))
 
+(deftest ingest-default-task-id-is-unique-per-invocation
+  "Omitting task-id starts a fresh ingest run. The same domain does not
+   replay the previous ingest forever."
+  (with-tmp-dir (tmp)
+    (let* ((dir (%write-corpus (merge-pathnames "uniq/" tmp)
+                               '(("a.md" "# A~%alpha"))))
+           (source (make-file-source :root dir :pattern "*.md"))
+           (domain (make-expert-domain :name "ingest-unique"))
+           (journal (task:make-in-memory-journal))
+           (store-1 (rag:make-mock-vector-store))
+           (store-2 (rag:make-mock-vector-store))
+           (seen 0)
+           (*ingest-item-hook* (lambda (plist)
+                                 (declare (ignore plist))
+                                 (incf seen))))
+      (let ((r1 (run-ingest domain source
+                            :store store-1
+                            :journal journal
+                            :embedder (mock-llm)))
+            (r2 (run-ingest domain source
+                            :store store-2
+                            :journal journal
+                            :embedder (mock-llm))))
+        (ok (getf r1 :hashes))
+        (ok (getf r2 :hashes))
+        (ok (= 2 seen) "both invocations execute item steps")
+        (let ((ids (remove-if (lambda (id)
+                                (search "/receipts" id :test #'char-equal))
+                              (task:journal-task-ids journal))))
+          (ok (>= (length ids) 2))
+          (ok (= (length ids) (length (remove-duplicates ids :test #'equal)))
+              "default ingest task ids are distinct"))))))
+
 (deftest ingest-mark-and-sweep-deletes-missing
   (with-tmp-dir (tmp)
     (let* ((dir (%write-corpus (merge-pathnames "sweep/" tmp)

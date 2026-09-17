@@ -191,7 +191,8 @@
 (defun journal-effect-receipt (journal activation-id payload
                                &key domain task run-id)
   "Record a side-effect receipt keyed by ACTIVATION-ID on TASK (or the
-   domain receipts task). Distinct from the activation step result."
+   domain receipts task). Distinct from the activation step result.
+   task-protocol 0.2.0 find/record take a durable-task, never the journal."
   (check-type activation-id string)
   (let* ((run (and run-id (task:make-run-id run-id)))
          (act (task:make-activation-id activation-id run))
@@ -220,7 +221,9 @@
                :journal journal))))))
 
 (defun find-effect-receipt (journal activation-id &key domain task run-id)
-  "Find a previously journaled receipt for ACTIVATION-ID, or NIL."
+  "Find a previously journaled receipt for ACTIVATION-ID, or NIL.
+   Looks up on the durable-task (activation or domain receipts task),
+   never by passing JOURNAL to task-protocol:find-effect-receipt."
   (let ((run (and run-id (task:make-run-id run-id))))
     (or (%lookup-effect-receipt task journal activation-id :run-id run)
         (and domain
