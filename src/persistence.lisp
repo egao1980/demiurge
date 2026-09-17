@@ -4,6 +4,37 @@
   "Root blackboard → EXPERT-DOMAIN. Shared with KSAR worker threads —
    do not rebind; clrhash between tests.")
 
+(defun %board-keyword-field-p (k)
+  (member k '(:key :triggered-key :watcher-id) :test #'eq))
+
+(defun %as-board-keyword (value)
+  "Intern a board field that JSON decoded as a string. IDs with '/' stay strings."
+  (cond
+    ((keywordp value) value)
+    ((and (or (stringp value) (symbolp value))
+          (plusp (length (string value)))
+          (not (find #\/ (string value))))
+     (intern (string-upcase (string value)) :keyword))
+    (t value)))
+
+(defun %keywordize-board-event (event)
+  "After task-protocol 0.2.1 JSON decode, write-section :key is a string.
+   Replay uses GETF / WRITE-SECTION with keywords. Local to the event —
+   does not replace EVENT-FROM-PLIST."
+  (when (typep event 'task:step-completed)
+    (let ((r (task:step-result event)))
+      (when (and (consp r) (evenp (length r)))
+        (setf (task:step-result event)
+              (loop for (k v) on r by #'cddr
+                    collect k
+                    collect (if (%board-keyword-field-p k)
+                                (%as-board-keyword v)
+                                v))))))
+  event)
+
+(defmethod task:journal-events :around ((journal tbsql:sql-task-journal) task)
+  (mapcar #'%keywordize-board-event (call-next-method)))
+
 (defun domain-task-id (domain)
   (let ((name (expert-name domain)))
     (if (current-tenant)
