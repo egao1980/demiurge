@@ -33,11 +33,16 @@
   ks)
 
 (defun register-expert-ks (blackboard domain)
-  "Register DOMAIN's KS set on BLACKBOARD. Watcher requires = KS-WATCH-KEYS."
+  "Register DOMAIN's KS set on BLACKBOARD. Watcher requires = KS-WATCH-KEYS.
+   Wrap the watcher so *CURRENT-KSAR* is bound for activation-scoped keys."
   (setf (gethash (bb:find-root-bb blackboard) *board-domains*) domain)
   (dolist (ks (expert-ks-set domain))
     (%prepare-agent-ks ks domain)
-    (bb:register-ks blackboard ks :requires (ks-watch-keys ks)))
+    (bb:register-ks blackboard ks :requires (ks-watch-keys ks))
+    (let ((watcher (bb:get-watcher blackboard (bb:ks-name ks))))
+      (when watcher
+        (setf (bb:watcher-handler watcher)
+              (%bind-current-ksar (bb:watcher-handler watcher))))))
   blackboard)
 
 (defun make-controller (domain &key blackboard journal profile
@@ -73,6 +78,13 @@
     (list
      (loop for (key value) on trigger by #'cddr
            do (bb:write-section blackboard key value)))))
+
+(defmethod bb:enqueue-ksar :around (bb ksar)
+  "Bind *CURRENT-KSAR* for every activation, including continuations."
+  (let ((inner (bb:ksar-handler ksar)))
+    (when inner
+      (setf (bb:ksar-handler ksar) (%bind-current-ksar inner))))
+  (call-next-method))
 
 (defmethod bb:enqueue-ksar :after (bb ksar)
   (declare (ignore ksar))

@@ -176,7 +176,15 @@
     (or (task:find-effect-receipt task activation-id
                                   :run-id run-id
                                   :activation-id activation-id)
-        (task:find-effect-receipt task activation-id))))
+        (task:find-effect-receipt task activation-id)
+        (find-if (lambda (ev)
+                   (and (typep ev 'task:effect-receipt)
+                        (or (equal (task:effect-receipt-idempotency-key ev)
+                                   activation-id)
+                            (equal (getf (task:effect-receipt-payload ev)
+                                         :activation-id)
+                                   activation-id))))
+                 (task:journal-events journal task)))))
 
 (defun journal-effect-receipt (journal activation-id payload
                                &key domain task run-id)
@@ -224,20 +232,22 @@
                         journal activation-id :run-id run)))
             (when found (return found)))))))
 
-(defmethod bb:watch :around ((bb bb:blackboard) &key id requires handler
-                            (priority 0) one-shot)
+(defun %bind-current-ksar (handler)
+  (if handler
+      (let ((inner handler))
+        (lambda (board ksar)
+          (let ((*current-ksar* ksar))
+            (funcall inner board ksar))))
+      handler))
+
+(defmethod bb:watch :around ((bb bb:blackboard) &rest args &key handler
+                            &allow-other-keys)
   "Bind *CURRENT-KSAR* so durable keys can include the KSAR id."
-  (call-next-method bb
-                    :id id
-                    :requires requires
-                    :handler (if handler
-                                 (let ((inner handler))
-                                   (lambda (board ksar)
-                                     (let ((*current-ksar* ksar))
-                                       (funcall inner board ksar))))
-                                 handler)
-                    :priority priority
-                    :one-shot one-shot))
+  (apply #'call-next-method bb
+         :handler (%bind-current-ksar handler)
+         (loop for (k v) on args by #'cddr
+               unless (eq k :handler)
+                 collect k and collect v)))
 
 (defun %ensure-sqlite-backend ()
   (or (find-package '#:sql-backend-sqlite3)
