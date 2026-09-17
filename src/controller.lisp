@@ -116,7 +116,6 @@
            (journal (bbj:board-journal board))
            (task (and journal (bbj:board-journal-task board))))
       (assign-board-run-id board :domain domain :run-id run-id)
-      (bb:write-section board :%demiurge-request-session *request-session*)
       (when (and stop (bb:section-bound-p board stop))
         (return-from run-controller board))
       (flet ((run ()

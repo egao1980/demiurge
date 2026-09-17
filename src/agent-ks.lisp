@@ -169,45 +169,32 @@
                              (llm:assistant-turn (princ-to-string text)))
                        :session session)))))
 
-(defun %request-session-for-board (blackboard)
-  "Session captured on the request thread (board section or special).
-   Workers do not inherit *REQUEST-SESSION*."
-  (let ((stored (and blackboard
-                     (bb:section-bound-p blackboard :%demiurge-request-session)
-                     (bb:read-section blackboard :%demiurge-request-session))))
-    (cond
-      ((request-session-p stored) stored)
-      ((request-session-p *request-session*) *request-session*)
-      (t (make-request-session)))))
-
 (defun %execute-agent-ks (ks blackboard)
-  (call-with-request-session (%request-session-for-board blackboard)
-    (lambda ()
-      (let* ((agent (agent-ks-agent ks))
-             (prompt (bb:read-section blackboard (agent-ks-prompt-key ks)))
-             (steering (%ensure-agent-steering ks agent))
-             (domain (%domain-for-board blackboard))
-             (catalogue (or *trial-restricted-catalogue*
-                            (catalogue-for-request domain)
-                            (agent-ks-catalogue ks)))
-             (tools (collect-agent-ks-tools
-                     ks
-                     :catalogue catalogue
-                     :steering steering
-                     :mcp-peer (agent-ks-mcp-peer ks))))
-        (%ensure-agent-memory ks agent)
-        (let* ((session (current-request-session-key))
-               (run (call-with-event-loop
-                     (lambda ()
-                       (%run-ai-agent agent prompt
-                                      :tools tools
-                                      :session session
-                                      :durability (agent-ks-durability ks))))))
-          (%record-session-exchange ks prompt run session)
-          (bb:write-section blackboard
-                           (agent-ks-result-key ks)
-                           (or (agent:agent-run-text run) run))
-          run)))))
+  (let* ((agent (agent-ks-agent ks))
+         (prompt (bb:read-section blackboard (agent-ks-prompt-key ks)))
+         (steering (%ensure-agent-steering ks agent))
+         (domain (%domain-for-board blackboard))
+         (catalogue (or *trial-restricted-catalogue*
+                        (catalogue-for-request domain)
+                        (agent-ks-catalogue ks)))
+         (tools (collect-agent-ks-tools
+                 ks
+                 :catalogue catalogue
+                 :steering steering
+                 :mcp-peer (agent-ks-mcp-peer ks))))
+    (%ensure-agent-memory ks agent)
+    (let* ((session (current-request-session-key))
+           (run (call-with-event-loop
+                 (lambda ()
+                   (%run-ai-agent agent prompt
+                                  :tools tools
+                                  :session session
+                                  :durability (agent-ks-durability ks))))))
+      (%record-session-exchange ks prompt run session)
+      (bb:write-section blackboard
+                       (agent-ks-result-key ks)
+                       (or (agent:agent-run-text run) run))
+      run)))
 
 (defmethod bb:ks-execute ((ks agent-ks) blackboard)
   (call-with-ksar-observe ks
