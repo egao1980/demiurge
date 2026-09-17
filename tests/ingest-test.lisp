@@ -451,19 +451,15 @@
            (source (make-file-source :root dir :pattern "*.md"))
            (domain (make-expert-domain :name "store-retry"))
            (store (make-instance '%h4-failing-store))
-           (good (rag:make-mock-vector-store))
            (tries 0)
+           (retry-name (intern "RETRY" :demiurge/ingest))
            (got (handler-bind ((ingest-store-error
                                 (lambda (c)
                                   (incf tries)
                                   (if (= tries 1)
-                                      (invoke-restart 'retry)
-                                      (use-value
-                                       (progn
-                                         (rag:upsert good
-                                                     (list-stored-chunks good))
-                                         t)
-                                       c)))))
+                                      (invoke-restart
+                                       (find-restart retry-name c))
+                                      (use-value t c)))))
                   (run-ingest domain source
                               :store store
                               :journal (task:make-in-memory-journal)
