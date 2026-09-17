@@ -78,11 +78,22 @@
      (loop for (key value) on trigger by #'cddr
            do (bb:write-section blackboard key value)))))
 
+(defun %bind-request-session (handler)
+  "Close over the request-thread session. KSAR workers do not inherit specials."
+  (if handler
+      (let ((session (or *request-session* (make-request-session))))
+        (lambda (board ksar)
+          (call-with-request-session session
+            (lambda ()
+              (funcall handler board ksar)))))
+      handler))
+
 (defmethod bb:enqueue-ksar :around (bb ksar)
-  "Bind *CURRENT-KSAR* for every activation, including continuations."
+  "Bind *CURRENT-KSAR* and the captured request-session on the worker."
   (let ((inner (bb:ksar-handler ksar)))
     (when inner
-      (setf (bb:ksar-handler ksar) (%bind-current-ksar inner))))
+      (setf (bb:ksar-handler ksar)
+            (%bind-current-ksar (%bind-request-session inner)))))
   (call-next-method))
 
 (defmethod bb:enqueue-ksar :after (bb ksar)
@@ -105,6 +116,7 @@
            (journal (bbj:board-journal board))
            (task (and journal (bbj:board-journal-task board))))
       (assign-board-run-id board :domain domain :run-id run-id)
+      (bb:write-section board :%demiurge-request-session *request-session*)
       (when (and stop (bb:section-bound-p board stop))
         (return-from run-controller board))
       (flet ((run ()
