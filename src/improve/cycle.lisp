@@ -357,19 +357,19 @@
                           :cycle-id cycle-id)))
                (%install-trial-ks cow vks restricted)
                (flet ((once ()
-                        (cons
-                         (eval:run-eval
-                          dataset
-                          (lambda (in)
-                            (%scheduler-respond cow vks in :variant :current)))
-                         (eval:run-eval
-                          dataset
-                          (lambda (in)
-                            (%scheduler-respond cow vks in
-                                                :variant :candidate))))))
-                 (let* ((pair (call-with-wall-clock wall-clock #'once))
-                        (b (car pair))
-                        (c (cdr pair))
+                        (eval:run-paired-trials
+                         dataset
+                         (lambda (in)
+                           (%scheduler-respond cow vks in :variant :current))
+                         (lambda (in)
+                           (%scheduler-respond cow vks in
+                                               :variant :candidate))
+                         :n 1)))
+                 (let* ((paired (call-with-wall-clock wall-clock #'once))
+                        (b (first (eval:paired-trial-result-baseline-runs
+                                   paired)))
+                        (c (first (eval:paired-trial-result-candidate-runs
+                                   paired)))
                         (ks-tag (string (bb:ks-name current))))
                    (when b
                      (demiurge::%observe-record "RECORD-EVAL-SCORE" ks-tag

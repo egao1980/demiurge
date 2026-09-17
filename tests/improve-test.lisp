@@ -265,8 +265,8 @@
       (ok (restricted-catalogue-p (revised-ks-catalogue cand)))
       (ok (restricted-catalogue-p (agent-ks-catalogue (revised-ks-base cand))))
       (ok (not (find "communication/send-message" names :test #'equal)))
-      (let ((*trial-restricted-catalogue* restricted)
-            (via-special (collect-agent-ks-tools ks)))
+      (let* ((*trial-restricted-catalogue* restricted)
+             (via-special (collect-agent-ks-tools ks)))
         (ok (not (find "communication/send-message"
                        (mapcar #'llm:llm-tool-name via-special)
                        :test #'equal)))))))
