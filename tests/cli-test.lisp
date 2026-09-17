@@ -96,9 +96,10 @@
 
 (deftest cli-ingest-smoke
   (with-clean-registry
-    (ok (= 0 (%run-cli (list "ingest"
-                             "--config" (namestring (%echo-toml))
-                             "--source" "corpus"))))))
+    (let ((*ingest-profile* :mock))
+      (ok (= 0 (%run-cli (list "ingest"
+                               "--config" (namestring (%echo-toml))
+                               "--source" "corpus")))))))
 
 (deftest cli-improve-smoke
   (with-clean-registry

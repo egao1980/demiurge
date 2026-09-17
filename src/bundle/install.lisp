@@ -389,7 +389,9 @@
     (loop for dir in dirs
           for i from 0
           for source = (make-instance '%item-list-source
-                                      :items (%ingest-items-from-dir dir))
+                                      :items (%ingest-items-from-dir dir)
+                                      :source-id (format nil "dir:~a"
+                                                         (namestring dir)))
           for id = (format nil "~a/dir-~d" (or task-id "ingest") i)
           do (push (ingest:run-ingest domain source
                                       :store store
