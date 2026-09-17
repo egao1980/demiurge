@@ -7,15 +7,26 @@
           (random (expt 36 6))))
 
 (defun %ensure-feedback-dataset (domain)
-  (or (find-if #'eval:eval-dataset-p (expert-eval-suites domain))
-      (let ((ds (eval:make-eval-dataset :name "feedback" :cases nil)))
-        (setf (expert-eval-suites domain) (list ds))
+  "Train-role suite for production feedback. Never the promotion holdout."
+  (or (find :train (expert-eval-suites domain)
+            :key (lambda (ds)
+                   (and (eval:eval-dataset-p ds)
+                        (eval:eval-dataset-role ds)))
+            :test #'eq)
+      (find-if (lambda (ds)
+                 (and (eval:eval-dataset-p ds)
+                      (not (eq (eval:eval-dataset-role ds) :holdout))))
+               (expert-eval-suites domain))
+      (let ((ds (eval:make-eval-dataset :name "feedback" :role :train
+                                        :cases nil)))
+        (setf (expert-eval-suites domain)
+              (append (expert-eval-suites domain) (list ds)))
         ds)))
 
 (defun record-feedback (domain &key feedback-id rating correction text
                                  answer ks-id)
-  "ADD-CASE on DOMAIN's dataset with :SOURCE :HUMAN-FEEDBACK.
-   Tags carry the answering KS id and FEEDBACK-ID."
+  "ADD-CASE on DOMAIN's train suite with :SOURCE :HUMAN-FEEDBACK :ROLE :TRAIN.
+   Production feedback cannot enter the promotion holdout."
   (check-type domain expert-domain)
   (let* ((ds (%ensure-feedback-dataset domain))
          (fid (or feedback-id (make-feedback-id)))
@@ -26,12 +37,14 @@
          (case (eval:make-eval-case
                 :input (or answer text "")
                 :expected (or correction text answer "")
+                :role :train
+                :source :human-feedback
                 :metadata (list :tags tags
                                 :rating rating
                                 :feedback-id fid
                                 :ks-id ks
                                 :source :human-feedback)))
-         (new (eval:add-case ds case :source :human-feedback)))
+         (new (eval:add-case ds case :source :human-feedback :role :train)))
     (setf (expert-eval-suites domain)
           (cons new (remove ds (copy-list (expert-eval-suites domain)))))
     new))

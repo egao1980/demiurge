@@ -43,10 +43,18 @@
   (:method ((ks agent-ks))
     (copy-list (agent-ks-watch ks))))
 
+(defvar *trial-restricted-catalogue* nil
+  "Restricted catalogue bound for an improvement trial. Preferred over the
+   expert/principal catalogue when constructing candidate tools.")
+
 (defun collect-agent-ks-tools (ks &key catalogue steering mcp-peer)
-  "Capability ops + skill-tool sources + optional MCP source."
+  "Capability ops + skill-tool sources + optional MCP source.
+   A bound *TRIAL-RESTRICTED-CATALOGUE* wins so sandboxed trials do not
+   inherit side-effecting ops from the expert catalogue."
   (append (catalogue-function-tools
-           (or catalogue (agent-ks-catalogue ks)))
+           (or catalogue
+               *trial-restricted-catalogue*
+               (agent-ks-catalogue ks)))
           (%skill-tool-sources
            (or steering (agent-ks-steering ks)))
           (let ((src (%maybe-mcp-source (or mcp-peer (agent-ks-mcp-peer ks)))))
@@ -132,7 +140,8 @@
          (prompt (bb:read-section blackboard (agent-ks-prompt-key ks)))
          (steering (%ensure-agent-steering ks agent))
          (domain (%domain-for-board blackboard))
-         (catalogue (or (catalogue-for-request domain)
+         (catalogue (or *trial-restricted-catalogue*
+                        (catalogue-for-request domain)
                         (agent-ks-catalogue ks)))
          (tools (collect-agent-ks-tools
                  ks

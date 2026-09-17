@@ -154,6 +154,7 @@
    #:ks-watch-keys
    #:catalogue-function-tools
    #:collect-agent-ks-tools
+   #:*trial-restricted-catalogue*
 
    #:expert-controller
    #:expert-controller-p
