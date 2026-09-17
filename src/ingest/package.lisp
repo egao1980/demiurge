@@ -24,6 +24,7 @@
    #:ingest-store-error
    #:ingest-store-required
    #:ingest-store-required-domain
+   #:imap-plaintext-refused
 
    #:ingest-item
    #:ingest-item-p
@@ -47,6 +48,10 @@
    #:imap-source
    #:imap-source-p
    #:make-imap-source
+   #:imap-source-tls
+   #:imap-source-port
+   #:imap-tls-mode
+   #:imap-secure-p
    #:s3-source
    #:s3-source-p
    #:make-s3-source

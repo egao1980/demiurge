@@ -56,22 +56,67 @@
          (when v (return v)))))
     (t nil)))
 
+(defparameter *feedback-known-keys*
+  '("feedback_id" "feedback-id" "feedbackId"
+    "rating" "correction" "text" "answer"
+    "ks_id" "ks-id" "ksId"))
+
+(defun %object-keys (value)
+  (cond
+    ((hash-table-p value)
+     (loop for k being the hash-keys of value collect (string k)))
+    ((and (consp value) (keywordp (car value)))
+     (loop for (k nil) on value by #'cddr collect (string-downcase (string k))))
+    ((and (consp value) (consp (car value)))
+     (mapcar (lambda (p) (string (car p))) value))
+    (t nil)))
+
+(defun validate-feedback-value (value)
+  "Require feedback_id + rating; reject unknown fields. Signals INVALID-FEEDBACK."
+  (when (or (null value) (stringp value) (numberp value))
+    (error 'invalid-feedback :message "malformed feedback value"))
+  (let ((fid (%ht-get value "feedbackId" :feedback-id "feedback-id"
+                      :feedbackId "feedback_id"))
+        (rating (%ht-get value "rating" :rating))
+        (unknown (remove-if (lambda (k)
+                              (member k *feedback-known-keys* :test #'string-equal))
+                            (%object-keys value))))
+    (unless fid
+      (error 'invalid-feedback :message "missing feedback_id"))
+    (unless rating
+      (error 'invalid-feedback :message "missing rating"))
+    (when unknown
+      (error 'invalid-feedback
+             :message (format nil "unknown feedback fields ~S" unknown)))
+    value))
+
 (defun handle-feedback-event (domain event)
-  "AG-UI CUSTOM event `demiurge.feedback` (or a value plist/table) → ADD-CASE."
+  "AG-UI CUSTOM event `demiurge.feedback` (or a value plist/table) → ADD-CASE.
+   Malformed input signals INVALID-FEEDBACK (no dataset mutation)."
+  (when (or (null event) (stringp event) (numberp event))
+    (error 'invalid-feedback :message "malformed feedback event"))
+  (when (and (typep event 'ag-ui:custom-event)
+             (not (equal (ag-ui:custom-event-name event) "demiurge.feedback")))
+    (error 'invalid-feedback
+           :message (format nil "unsupported event ~S"
+                            (ag-ui:custom-event-name event))))
   (let ((value (cond
-                 ((and (typep event 'ag-ui:custom-event)
-                       (equal (ag-ui:custom-event-name event)
-                              "demiurge.feedback"))
-                  (ag-ui:custom-event-value event))
                  ((typep event 'ag-ui:custom-event)
                   (ag-ui:custom-event-value event))
                  ((hash-table-p event)
-                  (or (gethash "value" event) event))
-                 ((listp event) event)
-                 (t event))))
+                  (if (equal (gethash "type" event) "CUSTOM")
+                      (or (gethash "value" event)
+                          (error 'invalid-feedback :message "CUSTOM event missing value"))
+                      event))
+                 ((listp event)
+                  (or (getf event :value) event))
+                 (t
+                  (error 'invalid-feedback :message "malformed feedback event")))))
+    (validate-feedback-value value)
     (record-feedback domain
                      :feedback-id (%ht-get value "feedbackId" :feedback-id
-                                           "feedback-id" :feedbackId)
+                                           "feedback-id" :feedbackId
+                                           "feedback_id")
                      :rating (%ht-get value "rating" :rating)
                      :correction (%ht-get value "correction" :correction)
                      :text (%ht-get value "text" :text)
@@ -79,13 +124,14 @@
                      :ks-id (%ht-get value "ksId" :ks-id "ks-id" :ksId))))
 
 (defun make-record-feedback-tool (domain)
-  "MCP tool `record_feedback`."
+  "MCP tool `record_feedback` with a closed input schema."
   (mcp:make-mcp-tool
    "record_feedback"
    :description "Record human feedback as an eval-protocol case"
    :input-schema (mcp:json-object
                   "type" "object"
-                  "additionalProperties" t
+                  "additionalProperties" nil
+                  "required" (vector "feedback_id" "rating")
                   "properties"
                   (mcp:json-object
                    "feedback_id" (mcp:json-object "type" "string")
@@ -95,6 +141,7 @@
                    "answer" (mcp:json-object "type" "string")
                    "ks_id" (mcp:json-object "type" "string")))
    :handler (lambda (args)
+              (validate-feedback-value args)
               (let ((ds (record-feedback
                          domain
                          :feedback-id (%ht-get args "feedback_id" :feedback-id

@@ -19,6 +19,11 @@
                     (#:ag-ui.sse #:ag-ui-backend-sse))
   (:export
    #:serve-error
+   #:invalid-feedback
+   #:request-too-large
+   #:*max-request-bytes*
+   #:loopback-address-p
+   #:check-serve-security
    #:*readyz-fn*
    #:domain-ready-p
    #:readyz-ok-p
@@ -55,4 +60,21 @@
   ()
   (:report (lambda (c s)
              (format s "demiurge serve error~@[: ~A~]"
+                     (demiurge-error-message c)))))
+
+(defparameter *max-request-bytes* (* 256 1024)
+  "Hard cap on served HTTP request bodies (feedback and other POST routes).")
+
+(define-condition invalid-feedback (serve-error)
+  ()
+  (:report (lambda (c s)
+             (format s "invalid feedback~@[: ~A~]"
+                     (demiurge-error-message c)))))
+
+(define-condition request-too-large (serve-error)
+  ((limit :initarg :limit :reader request-too-large-limit :initform nil)
+   (size :initarg :size :reader request-too-large-size :initform nil))
+  (:report (lambda (c s)
+             (format s "request body exceeds ~A bytes~@[: ~A~]"
+                     (or (request-too-large-limit c) *max-request-bytes*)
                      (demiurge-error-message c)))))

@@ -156,3 +156,82 @@
       (let ((bad (mcp:call-tool server "read_workspace"
                                 (mcp:json-object "path" "../etc/passwd"))))
         (ok (and (hash-table-p bad) (gethash "isError" bad)))))))
+
+(defun %feedback-env (body &key (content-type "application/json")
+                             content-length)
+  (list :request-method :post
+        :path-info "/feedback"
+        :content-type content-type
+        :content-length (or content-length (length body))
+        :raw-body body))
+
+(deftest feedback-http-rejects-malformed-without-mutation
+  (let* ((ds (eval:make-eval-dataset :name "fb-http" :cases nil))
+         (domain (make-echo-expert :backend (mock-llm) :name "echo-fb-http"))
+         (app (make-expert-app domain :personal)))
+    (setf (expert-eval-suites domain) (list ds))
+    (ok (signals (handle-feedback-event domain "not-json")
+                 'invalid-feedback))
+    (ok (zerop (length (eval:eval-dataset-cases
+                        (first (expert-eval-suites domain))))))
+    (let ((res (funcall app (%feedback-env "not-json"))))
+      (ok (= 400 (first res))))
+    (ok (zerop (length (eval:eval-dataset-cases
+                        (first (expert-eval-suites domain)))))
+        "malformed JSON does not add a case")
+    (let ((res (funcall app (%feedback-env "{\"unknown\":true,\"rating\":1}"))))
+      (ok (= 400 (first res))))
+    (let ((res (funcall app (%feedback-env "{\"feedback_id\":\"x\"}"))))
+      (ok (= 400 (first res)) "missing rating"))
+    (let ((res (funcall app (%feedback-env "{\"feedback_id\":\"x\",\"rating\":1}"
+                                           :content-type "text/plain"))))
+      (ok (= 415 (first res))))
+    (let ((res (funcall app (%feedback-env "{\"feedback_id\":\"x\",\"rating\":1}"
+                                           :content-length
+                                           (1+ *max-request-bytes*)))))
+      (ok (= 413 (first res))))
+    (ok (zerop (length (eval:eval-dataset-cases
+                        (first (expert-eval-suites domain)))))
+        "4xx paths leave the dataset untouched")
+    (let ((res (funcall app (%feedback-env
+                            "{\"feedback_id\":\"fb-ok\",\"rating\":5,\"answer\":\"hi\"}"))))
+      (ok (= 200 (first res)))
+      (ok (plusp (length (eval:eval-dataset-cases
+                          (first (expert-eval-suites domain)))))))))
+
+(deftest record-feedback-mcp-strict-schema
+  (let* ((domain (make-echo-expert :backend (mock-llm) :name "echo-fb-strict"))
+         (server (make-expert-mcp-server domain)))
+    (setf (expert-eval-suites domain)
+          (list (eval:make-eval-dataset :name "fb-strict" :cases nil)))
+    (ok (signals (mcp:call-tool server "record_feedback"
+                                (mcp:json-object "rating" 1))
+                 'mcp:mcp-error)
+        "missing feedback_id")
+    (ok (signals (mcp:call-tool server "record_feedback"
+                                (mcp:json-object "feedback_id" "x"
+                                                 "rating" 1
+                                                 "evil" t))
+                 'mcp:mcp-error)
+        "unknown field")
+    (ok (zerop (length (eval:eval-dataset-cases
+                        (first (expert-eval-suites domain))))))))
+
+(deftest serve-http-bind-requires-loopback-or-insecure-local
+  (let* ((domain (make-echo-expert :backend (mock-llm) :name "echo-bind")))
+    (ok (check-serve-security "127.0.0.1" :personal))
+    (ok (check-serve-security "localhost" :personal))
+    (ok (signals (check-serve-security "0.0.0.0" :personal)
+                 'serve-error))
+    (ok (check-serve-security "0.0.0.0" :personal :insecure-local t))
+    (ok (signals (serve-expert domain
+                               :transports '(:http)
+                               :host "0.0.0.0"
+                               :start nil)
+                 'serve-error))
+    (ok (serve-session-p
+         (serve-expert domain
+                       :transports '(:http)
+                       :host "0.0.0.0"
+                       :insecure-local t
+                       :start nil)))))

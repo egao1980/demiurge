@@ -91,6 +91,20 @@
                      (tenant-isolation-expected c)
                      (demiurge-error-message c)))))
 
+(define-condition corporate-auth-error (demiurge-error)
+  ()
+  (:report (lambda (c s)
+             (format s "corporate auth error~@[: ~A~]"
+                     (demiurge-error-message c)))))
+
+(define-condition weak-session-secret (corporate-auth-error)
+  ((provided :initarg :provided :reader weak-session-secret-provided
+             :initform :missing))
+  (:report (lambda (c s)
+             (format s "corporate profile requires a strong external session secret (~A)~@[: ~A~]"
+                     (weak-session-secret-provided c)
+                     (demiurge-error-message c)))))
+
 (defun call-with-demiurge-restarts (thunk)
   "Establish RETRY / USE-VALUE around THUNK."
   (tagbody

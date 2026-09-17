@@ -315,7 +315,8 @@
          (domain (%load-domain path))
          (transports (%map-transports (cli:get-option opts :transport)))
          (host (or (cli:get-option opts :host) "127.0.0.1"))
-         (port (or (cli:get-option opts :port) 8080)))
+         (port (or (cli:get-option opts :port) 8080))
+         (insecure-local (cli:get-option opts :insecure-local)))
     (format t "Serving ~a transports ~{~a~^,~} ~a:~a~%"
             (expert-name domain) transports host port)
     (let* ((prof (expert-profile domain))
@@ -327,6 +328,7 @@
                         :transports transports
                         :host host
                         :port port
+                        :insecure-local (and insecure-local t)
                         :start *serve-start*)))
 
 (defun cmd-ask (opts free)
@@ -547,7 +549,10 @@
                             :help "HTTP bind host")
            (cli:make-option :name "port" :short #\p :long "port"
                             :kind :integer :key :port :default 8080
-                            :help "HTTP bind port"))
+                            :help "HTTP bind port")
+           (cli:make-option :name "insecure-local" :long "insecure-local"
+                            :kind :flag :key :insecure-local
+                            :help "Allow unauthenticated HTTP off loopback"))
      :handler #'cmd-serve)
     (cli:make-command
      :name "ask"

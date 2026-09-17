@@ -47,6 +47,9 @@
    #:tenant-isolation-expected
    #:tenant-isolation-actual
    #:tenant-isolation-reference
+   #:corporate-auth-error
+   #:weak-session-secret
+   #:weak-session-secret-provided
    #:call-with-demiurge-restarts
    #:with-demiurge-restarts
    #:invoke-retry
@@ -76,6 +79,13 @@
    #:demiurge-config-corporate-otlp-endpoint
    #:demiurge-config-corporate-tenant-id
    #:demiurge-config-corporate-role-grants
+   #:demiurge-config-corporate-session-secret
+   #:demiurge-config-corporate-session-kid
+   #:demiurge-config-corporate-session-previous-secret
+   #:demiurge-config-corporate-session-previous-kid
+   #:demiurge-config-corporate-session-issuer
+   #:demiurge-config-corporate-session-audience
+   #:demiurge-config-corporate-insecure-local
 
    #:call-with-ksar-observe
    #:call-with-agent-observe
@@ -189,6 +199,19 @@
    #:ldap-groups-for-dn
    #:map-groups-to-roles
    #:wrap-corporate-auth
+   #:corporate-profile-session-secret
+   #:corporate-profile-session-kid
+   #:corporate-profile-session-keys
+   #:corporate-profile-session-issuer
+   #:corporate-profile-session-audience
+   #:corporate-profile-insecure-local-p
+   #:+min-session-secret-length+
+   #:*session-secret-environ*
+   #:strong-session-secret-p
+   #:assert-strong-session-secret
+   #:encode-session-cookie
+   #:decode-session-cookie
+   #:session-cookie-header
    #:parse-postgres-dsn
    #:postgres-claimable-lease-sql
    #:claim-task-postgres)
