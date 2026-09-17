@@ -520,16 +520,24 @@
                             :version-table
                             (format nil "~a_sql_migrate_version" ident)))))
     (when (and dir reg mig-class)
-      (funcall reg dir
-               (make-instance mig-class
-                              :name "tenant-schema"
-                              :revision "0001"
-                              :down-revision nil
-                              :ops nil))
       (let ((sess (find-symbol "MAKE-SESSION-REVISION" :conversation-backend-sql))
             (jour (find-symbol "MAKE-JOURNAL-REVISION" :task-backend-sql)))
-        (when (and sess (fboundp sess)) (funcall sess dir))
-        (when (and jour (fboundp jour)) (funcall jour dir))))
+        ;; Session/journal helpers already register revision 0001. A second
+        ;; placeholder 0001 is a duplicate when those systems are loaded.
+        (if (and sess (fboundp sess))
+            (funcall sess dir)
+            (funcall reg dir
+                     (make-instance mig-class
+                                    :name "tenant-schema"
+                                    :revision "0001"
+                                    :down-revision nil
+                                    :ops nil)))
+        (when (and jour (fboundp jour))
+          (let ((migrate-error (find-symbol "MIGRATE-ERROR" :sql-migrate)))
+            (handler-case (funcall jour dir)
+              (error (c)
+                (unless (and migrate-error (typep c migrate-error))
+                  (error c))))))))
     (when (and conn dir)
       (ignore-errors
         (sql-protocol:execute
