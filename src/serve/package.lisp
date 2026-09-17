@@ -16,7 +16,8 @@
                     (#:mcp.stdio #:mcp-backend-stdio)
                     (#:mcp.http #:mcp-backend-streamable-http)
                     (#:a2a.rpc #:a2a-backend-jsonrpc)
-                    (#:ag-ui.sse #:ag-ui-backend-sse))
+                    (#:ag-ui.sse #:ag-ui-backend-sse)
+                    (#:bt #:bordeaux-threads))
   (:export
    #:serve-error
    #:invalid-feedback
@@ -45,6 +46,9 @@
 
    #:make-expert-app
    #:serve-expert
+   #:normalize-serve-transports
+   #:*start-http-hook*
+   #:*start-stdio-hook*
    #:serve-session
    #:serve-session-p
    #:serve-session-domain

@@ -110,12 +110,13 @@
   (demiurge-config-session-window-turns (current-demiurge-config)))
 
 (defun %ensure-agent-memory (ks agent)
+  "Attach a memory object if the agent has none. Session identity is
+   passed per run — never key shared domain memory by KS name."
   (unless (agent:ai-agent-memory agent)
     (setf (agent:ai-agent-memory agent)
           (or (agent-ks-memory ks)
               (conv:make-window-memory
-               :window-size (%session-window-turns)
-               :session (string (bb:ks-name ks))))))
+               :window-size (%session-window-turns)))))
   (agent:ai-agent-memory agent))
 
 (defun %ensure-agent-steering (ks agent)
@@ -149,11 +150,13 @@
                  :steering steering
                  :mcp-peer (agent-ks-mcp-peer ks))))
     (%ensure-agent-memory ks agent)
-    (let ((run (call-with-event-loop
-                (lambda ()
-                  (%run-ai-agent agent prompt
-                                 :tools tools
-                                 :durability (agent-ks-durability ks))))))
+    (let* ((session (current-request-session-key))
+           (run (call-with-event-loop
+                 (lambda ()
+                   (%run-ai-agent agent prompt
+                                  :tools tools
+                                  :session session
+                                  :durability (agent-ks-durability ks))))))
       (bb:write-section blackboard
                        (agent-ks-result-key ks)
                        (or (agent:agent-run-text run) run))

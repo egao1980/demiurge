@@ -6,21 +6,24 @@
                                                      timeout)
   "Collect AG-UI events (camel key-style) for a board run of DOMAIN."
   (check-type domain expert-domain)
-  (let ((board (or blackboard (bb:make-blackboard))))
-    (unless (bb:list-watchers board)
-      (register-expert-ks board domain))
-    (wire.ag-ui:run-board-as-ag-ui-events
-     board
-     (lambda (b)
-       (bb:write-section b :prompt prompt)
-       (bb:run-scheduler (bb:find-root-bb b)
-                         :until-empty t
-                         :timeout (or timeout 10))
-       (unless (bb:section-bound-p b :feedback-id)
-         (bb:write-section b :feedback-id (make-feedback-id))))
-     :watch watch
-     :thread-id (or thread-id "thread-expert")
-     :run-id (or run-id (format nil "run-~a" (random 100000000))))))
+  (let ((thread (or thread-id "thread-expert")))
+    (with-request-session (nil :transport (or *request-transport* :http)
+                               :conversation-id thread)
+      (let ((board (or blackboard (bb:make-blackboard))))
+        (unless (bb:list-watchers board)
+          (register-expert-ks board domain))
+        (wire.ag-ui:run-board-as-ag-ui-events
+         board
+         (lambda (b)
+           (bb:write-section b :prompt prompt)
+           (bb:run-scheduler (bb:find-root-bb b)
+                             :until-empty t
+                             :timeout (or timeout 10))
+           (unless (bb:section-bound-p b :feedback-id)
+             (bb:write-section b :feedback-id (make-feedback-id))))
+         :watch watch
+         :thread-id thread
+         :run-id (or run-id (format nil "run-~a" (random 100000000))))))))
 
 (defun make-expert-ag-ui-agent (domain)
   "AG-UI agent whose handler runs DOMAIN via blackboard-wire/ag-ui."

@@ -3,15 +3,19 @@
 (defvar *ks-eval-history* (make-hash-table :test 'equal)
   "KS name string → list of recent eval-run means (newest first).")
 
+(defvar *ks-eval-history-lock* (bt2:make-lock "demiurge-eval-history")
+  "Serializes appends to *KS-EVAL-HISTORY*.")
+
 (defvar *improve-phase-hook* nil
   "Optional (lambda (phase-name)) invoked at the start of a live durable phase.")
 
 (defun record-ks-eval (ks-id mean &optional (history *ks-eval-history*))
   (let ((key (string-downcase (string ks-id))))
-    (push mean (gethash key history))
-    (when mean
-      (demiurge::%observe-record "RECORD-EVAL-SCORE" ks-id mean))
-    (gethash key history)))
+    (bt2:with-lock-held (*ks-eval-history-lock*)
+      (push mean (gethash key history))
+      (when mean
+        (demiurge::%observe-record "RECORD-EVAL-SCORE" ks-id mean))
+      (gethash key history))))
 
 (defun %rolling-mean (scores window)
   (let* ((kept (subseq scores 0 (min window (length scores))))

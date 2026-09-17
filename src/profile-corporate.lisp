@@ -130,6 +130,128 @@
       (tenant-scope "session" name tenant)
       (string name)))
 
+;;; ---------------------------------------------------------------------------
+;;; Request / serve session (principal + tenant + transport + conversation)
+;;; ---------------------------------------------------------------------------
+
+(defvar *request-session* nil
+  "REQUEST-SESSION bound for the current serve/request or controller run.")
+
+(defvar *request-transport* nil
+  "Transport keyword for the current request (:http, :stdio, or :local).")
+
+(defvar *conversation-id* nil
+  "Conversation / thread / context id for the current request.")
+
+(defclass request-session ()
+  ((principal :initarg :principal :accessor request-session-principal
+              :initform "anonymous")
+   (tenant :initarg :tenant :accessor request-session-tenant :initform nil)
+   (transport :initarg :transport :accessor request-session-transport
+              :initform :local)
+   (conversation-id :initarg :conversation-id
+                    :accessor request-session-conversation-id
+                    :initform nil)))
+
+(defun request-session-p (x)
+  (typep x 'request-session))
+
+(defun fresh-conversation-id ()
+  "Mint a per-request conversation id. Never reuse a KS name."
+  (format nil "conv-~a-~a"
+          (get-universal-time)
+          (random (expt 36 8))))
+
+(defun %session-token (value &optional default)
+  (let ((raw (or value default)))
+    (when raw
+      (string-downcase (string raw)))))
+
+(defun make-request-session (&key principal tenant transport conversation-id)
+  (make-instance 'request-session
+                 :principal (or (%session-token principal)
+                                (%session-token *principal*)
+                                "anonymous")
+                 :tenant (or tenant (current-tenant))
+                 :transport (or transport *request-transport* :local)
+                 :conversation-id (or conversation-id
+                                      *conversation-id*
+                                      (fresh-conversation-id))))
+
+(defun merge-request-session (&key session principal tenant transport
+                                conversation-id)
+  "Overlay explicit fields on SESSION or *REQUEST-SESSION*."
+  (let ((base (or session *request-session*)))
+    (make-request-session
+     :principal (or principal
+                    (and base (request-session-principal base))
+                    *principal*)
+     :tenant (or tenant
+                 (and base (request-session-tenant base))
+                 (current-tenant))
+     :transport (or transport
+                    (and base (request-session-transport base))
+                    *request-transport*)
+     :conversation-id (or conversation-id
+                          (and base (request-session-conversation-id base))
+                          *conversation-id*))))
+
+(defun request-session-key (&key principal tenant transport conversation-id
+                              session)
+  "Stable conversation-protocol session key.
+   principal + tenant + transport + conversation-id — not the KS name."
+  (let* ((sess (or session *request-session*))
+         (principal (or (%session-token principal)
+                        (and sess (%session-token
+                                   (request-session-principal sess)))
+                        (%session-token *principal*)
+                        "anonymous"))
+         (tenant (or tenant
+                     (and sess (request-session-tenant sess))
+                     (current-tenant)))
+         (transport (or (%session-token transport)
+                        (and sess (%session-token
+                                   (request-session-transport sess)))
+                        (%session-token *request-transport*)
+                        "local"))
+         (cid (or conversation-id
+                  (and sess (request-session-conversation-id sess))
+                  *conversation-id*)))
+    (unless cid
+      (error 'invalid-expert
+             :message "request-session-key requires a conversation-id"))
+    (let ((leaf (format nil "~a/~a/~a" principal transport cid)))
+      (if tenant
+          (tenant-scope "session" leaf tenant)
+          (format nil "session/~a" leaf)))))
+
+(defun current-request-session ()
+  *request-session*)
+
+(defun current-request-session-key ()
+  (request-session-key :session (or *request-session*
+                                    (make-request-session))))
+
+(defun call-with-request-session (session thunk)
+  (check-type session request-session)
+  (let ((*request-session* session)
+        (*request-transport* (request-session-transport session))
+        (*conversation-id* (request-session-conversation-id session))
+        (*principal* (or (request-session-principal session) *principal*))
+        (*tenant* (or (request-session-tenant session) *tenant*)))
+    (funcall thunk)))
+
+(defmacro with-request-session ((&optional session &key principal tenant
+                                          transport conversation-id)
+                                &body body)
+  `(call-with-request-session
+    (merge-request-session :session ,session
+                           :principal ,principal
+                           :tenant ,tenant
+                           :transport ,transport
+                           :conversation-id ,conversation-id)
+    (lambda () ,@body)))
+
 (defun tenant-task-id (name &optional (tenant (current-tenant)))
   (if tenant
       (tenant-scope "domain" name tenant)
@@ -1082,5 +1204,8 @@
                (let ((*tenant* (or (getf sess :tenant) (profile-tenant profile)))
                      (*principal* (getf sess :subject))
                      (*principal-roles* (getf sess :roles)))
-                 (funcall app env))
+                 (with-request-session (nil :transport :http
+                                            :principal *principal*
+                                            :tenant *tenant*)
+                   (funcall app env)))
                (%auth-challenge profile env))))))))

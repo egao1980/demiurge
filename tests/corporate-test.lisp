@@ -478,6 +478,43 @@ issuer = \"https://file.example\"
       (ok (not (search "Secure" (demiurge::%set-cookie-header "tok" profile)))
           "insecure-local omits Secure"))))
 
+(deftest corporate-request-session-isolates-principal-and-tenant
+  (let ((alice (request-session-key :principal "alice" :tenant "acme"
+                                    :transport :http :conversation-id "t1"))
+        (bob (request-session-key :principal "bob" :tenant "acme"
+                                  :transport :http :conversation-id "t1"))
+        (other (request-session-key :principal "alice" :tenant "other"
+                                    :transport :http :conversation-id "t1")))
+    (ok (search "alice" alice))
+    (ok (search "tenant/acme/" alice))
+    (ok (not (equal alice bob)))
+    (ok (not (equal alice other)))))
+
+(deftest corporate-http-request-binds-authenticated-session
+  (with-tmp-dir (tmp)
+    (let* ((profile (%memory-corporate tmp :config (%corporate-cfg)))
+           (seen nil)
+           (inner (lambda (env)
+                    (declare (ignore env))
+                    (setf seen (current-request-session-key))
+                    '(200 (:content-type "text/plain; charset=utf-8")
+                      ("ok"))))
+           (app (wrap-corporate-auth inner profile))
+           (tok (encode-session-cookie profile "alice"
+                                       :tenant "acme" :roles '("reader"))))
+      (funcall app
+               (list :request-method :get
+                     :path-info "/"
+                     :headers
+                     (let ((ht (make-hash-table :test #'equal)))
+                       (setf (gethash "cookie" ht)
+                             (format nil "demiurge_session=~a" tok))
+                       ht)))
+      (ok (stringp seen))
+      (ok (search "alice" seen))
+      (ok (search "tenant/acme/" seen))
+      (ok (search "/http/" seen)))))
+
 (deftest corporate-observability-compose-is-loopback
   (let ((text (uiop:read-file-string
                (asdf:system-relative-pathname

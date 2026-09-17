@@ -100,8 +100,10 @@
      :scope (or scope "default"))))
 
 (defun call-with-ksar-observe (ks thunk)
-  "Span demiurge.ksar.execute around THUNK. Log with correlated ids."
-  (let ((start (get-internal-real-time)))
+  "Span demiurge.ksar.execute around THUNK. Duration + outcome are
+   recorded in UNWIND-PROTECT so failed KSARs still emit latency."
+  (let ((start (get-internal-real-time))
+        (outcome :error))
     (tel:with-span ((%observe-span-name "+SPAN-KSAR-EXECUTE+"
                                         "demiurge.ksar.execute")
                     :attributes (list "demiurge.ks"
@@ -111,8 +113,11 @@
                          :ks (bb:ks-name ks))
         (when log:*log-backend*
           (log:info "ksar execute"))
-        (prog1 (funcall thunk)
-          (%observe-record "RECORD-KSAR-DURATION" ks start))))))
+        (unwind-protect
+             (prog1 (funcall thunk)
+               (setf outcome :ok))
+          (%observe-record "RECORD-KSAR-DURATION" ks start
+                           :outcome outcome))))))
 
 (defun call-with-agent-observe (agent thunk)
   "Span demiurge.agent.run around THUNK. Log with correlated ids."

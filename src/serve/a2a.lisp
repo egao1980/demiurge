@@ -34,19 +34,21 @@
                                         task-id timeout)
   "Register DOMAIN's KS set and drain the agenda as an A2A task."
   (check-type domain expert-domain)
-  (let ((board (or blackboard (bb:make-blackboard))))
-    (unless (bb:list-watchers board)
-      (register-expert-ks board domain))
-    (let ((task (wire.a2a:board-run-as-a2a-task
-                 board
-                 :sections sections
-                 :task-id task-id
-                 :trigger-key (and prompt :prompt)
-                 :trigger-value prompt
-                 :timeout timeout)))
-      (when (and prompt (not (bb:section-bound-p board :feedback-id)))
-        (bb:write-section board :feedback-id (make-feedback-id)))
-      task)))
+  (with-request-session (nil :transport (or *request-transport* :http)
+                             :conversation-id task-id)
+    (let ((board (or blackboard (bb:make-blackboard))))
+      (unless (bb:list-watchers board)
+        (register-expert-ks board domain))
+      (let ((task (wire.a2a:board-run-as-a2a-task
+                   board
+                   :sections sections
+                   :task-id task-id
+                   :trigger-key (and prompt :prompt)
+                   :trigger-value prompt
+                   :timeout timeout)))
+        (when (and prompt (not (bb:section-bound-p board :feedback-id)))
+          (bb:write-section board :feedback-id (make-feedback-id)))
+        task))))
 
 (defun make-expert-a2a-agent (domain &key url)
   (a2a:make-a2a-agent
@@ -56,8 +58,15 @@
               (declare (ignore agent))
               (let* ((text (or (a2a:message-text message) ""))
                      (board (bb:make-blackboard))
-                     (a2a-task (run-expert-as-a2a-task
-                                domain :blackboard board :prompt text)))
+                     (a2a-task (with-request-session
+                                   (nil :transport (or *request-transport* :http)
+                                        :conversation-id
+                                        (or (a2a:a2a-message-context-id message)
+                                            (a2a:a2a-message-task-id message)
+                                            (and task (a2a:a2a-task-context-id task))
+                                            (and task (a2a:a2a-task-id task))))
+                                 (run-expert-as-a2a-task
+                                  domain :blackboard board :prompt text))))
                 (setf (a2a:a2a-task-state task) (a2a:a2a-task-state a2a-task)
                       (a2a:a2a-task-artifacts task)
                       (a2a:a2a-task-artifacts a2a-task))
