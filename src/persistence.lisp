@@ -1,7 +1,8 @@
 (in-package #:demiurge)
 
 (defvar *board-domains* (make-hash-table :test 'eq)
-  "Root blackboard → EXPERT-DOMAIN.")
+  "Root blackboard → EXPERT-DOMAIN. Shared with KSAR worker threads —
+   do not rebind; clrhash between tests.")
 
 (defun %decoded-event-plist (data)
   "Normalize json-protocol/jzon object decode (vector or hash-table) to a plist
