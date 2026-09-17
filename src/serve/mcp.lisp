@@ -19,7 +19,8 @@
    :description "Run the expert on a prompt and return the result"
    :input-schema (mcp:json-object
                   "type" "object"
-                  "additionalProperties" t
+                  "additionalProperties" nil
+                  "required" (vector "prompt")
                   "properties"
                   (mcp:json-object
                    "prompt" (mcp:json-object "type" "string")))
