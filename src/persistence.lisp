@@ -82,7 +82,8 @@
   "KSAR bound by the watch wrapper while a handler runs.")
 
 (defvar *board-run-ids* (make-hash-table :test 'eq)
-  "Root blackboard → domain run-id string.")
+  "Root blackboard → domain run-id string. Shared with KSAR workers —
+   do not rebind; clrhash between tests.")
 
 (defun fresh-durable-id (prefix &optional name)
   "Unique id for a new run/cycle invocation. Explicit ids resume."
