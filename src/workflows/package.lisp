@@ -76,6 +76,8 @@
    #:research-trace
    #:research-budget-scope
    #:wrap-research-llm
+   #:collect-research-citations
+   #:format-research-budget-footer
    #:run-deep-research
    #:render-research-document
 

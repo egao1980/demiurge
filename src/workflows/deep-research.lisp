@@ -420,16 +420,15 @@
           (format s "(none)~%")))))
 
 (defun %annotate-text (text citations)
-  "Build :link annotation-spans for CITATION targets found in TEXT."
+  "Build annotation-spans for CITATION targets found in TEXT.
+   Inline hits are optional; the Sources section always lists every citation."
   (let ((anns '()))
     (dolist (cite citations)
       (let* ((target (getf cite :target))
              (kind (or (getf cite :kind) :link)))
         (when (and target (stringp target) (plusp (length target)))
           (let ((start (or (search target text :test #'char-equal)
-                           (let ((ans-start (search (format nil "~a" target)
-                                                    text)))
-                             ans-start))))
+                           (search (format nil "~a" target) text))))
             (when start
               (push (doc:make-annotation-span
                      :start start
@@ -439,12 +438,68 @@
                     anns))))))
     (nreverse anns)))
 
-(defun %synthesize-document (question children &key partial synthesis-text)
+(defun collect-research-citations (children &key workspace)
+  "Unique citation plists (:kind :block-id|:link :target) from children + catalog.
+   Always includes both workspace/corpus block-ids and source URLs."
+  (let ((seen (make-hash-table :test 'equal))
+        (out '()))
+    (flet ((add (kind target)
+             (when (and target (or (stringp target) (symbolp target)))
+               (let* ((s (if (stringp target) target (princ-to-string target)))
+                      (key (cons kind s)))
+                 (when (and (plusp (length s)) (not (gethash key seen)))
+                   (setf (gethash key seen) t)
+                   (push (list :kind kind :target s) out))))))
+      (dolist (child children)
+        (dolist (cite (getf child :citations))
+          (add (or (getf cite :kind) :link) (getf cite :target)))
+        (dolist (hit (getf child :rag-hits))
+          (add :block-id (getf hit :id)))
+        (dolist (hit (getf child :web-hits))
+          (add :link (getf hit :url)))
+        (dolist (sid (getf child :source-ids))
+          (add :block-id sid)))
+      (when (research-workspace-p workspace)
+        (dolist (e (research-source-catalog workspace))
+          (add :block-id (getf e :id))
+          (add :link (getf e :uri)))))
+    (nreverse out)))
+
+(defun format-research-budget-footer (scope)
+  "Plain-text footer line naming the A2 budget scope for this run."
+  (format nil "Budget scope: ~s" (or scope '(:research :unknown))))
+
+(defun %sources-section-text (citations workspace)
+  "Markdown-ish sources listing. Does not depend on the LLM echoing cites."
+  (let ((catalog (and (research-workspace-p workspace)
+                      (research-source-catalog workspace))))
+    (if (null citations)
+        "(no citations recorded)"
+        (with-output-to-string (s)
+          (dolist (cite citations)
+            (let* ((kind (getf cite :kind))
+                   (target (getf cite :target))
+                   (entry (find target catalog
+                                :key (lambda (e) (getf e :id))
+                                :test #'equal)))
+              (if (eq kind :block-id)
+                  (format s "[~a]~@[ ~a~]~@[ — ~a~]~%"
+                          target
+                          (and entry (getf entry :title))
+                          (or (and entry (getf entry :uri))
+                              (getf cite :uri)))
+                  (format s "~a~%" target))))))))
+
+(defun %synthesize-document (question children &key partial synthesis-text
+                             workspace budget-scope)
   (let* ((title (format nil "Research: ~a" question))
          (intro-text (or synthesis-text
                          (if partial
                              (format nil "Partial report for ~a (incomplete)." question)
                              (format nil "Cited report for ~a." question))))
+         (citations (collect-research-citations children :workspace workspace))
+         (sources-text (%sources-section-text citations workspace))
+         (footer (format-research-budget-footer budget-scope))
          (intro (doc:make-text-block :kind :heading :text title))
          (lede (doc:make-text-block :kind :para :text intro-text))
          (sections
@@ -459,10 +514,25 @@
                          :children (list (doc:make-text-block
                                           :kind :para
                                           :text ans
-                                          :annotations anns))))))
+                                          :annotations anns)))))
+         (sources-sec
+          (doc:make-section-block
+           :title "Sources"
+           :level 2
+           :children (list (doc:make-text-block
+                            :kind :para
+                            :text sources-text
+                            :annotations (%annotate-text sources-text citations)))))
+         (footer-sec
+          (doc:make-section-block
+           :title "Budget"
+           :level 2
+           :children (list (doc:make-text-block :kind :para :text footer)))))
     (let ((doc (doc:make-extracted-document
                 :metadata (doc:make-document-metadata :title title)
-                :blocks (cons intro (cons lede sections)))))
+                :blocks (append (list intro lede)
+                                sections
+                                (list sources-sec footer-sec)))))
       (doc:ensure-ids doc)
       doc)))
 
@@ -498,7 +568,20 @@
              (render-research-document doc :format :markdown
                                        :stream stream :profile profile)))))))
 
-(defun %quality-gate (question children markdown)
+(defun %gate-expected (child)
+  "Short expected needle: ANSWER:<question> when present, else the answer."
+  (let ((ans (or (getf child :answer) "")))
+    (cond
+      ((zerop (length ans)) (or (getf child :question) ""))
+      ((search "ANSWER:" ans)
+       (string-trim '(#\Space #\Tab)
+                    (subseq ans 0 (or (position #\[ ans) (length ans)))))
+      (t ans))))
+
+(defun %quality-gate (question children scored-text)
+  "A1 contains-scorer over SCORED-TEXT (the synthesis briefing, not the
+   auto-assembled child sections). A scripted LLM that omits expected
+   child text fails the gate."
   (if (null children)
       (eval:make-eval-run
        :dataset (eval:make-eval-dataset :name "research-quality" :cases nil)
@@ -506,7 +589,7 @@
       (let* ((cases (mapcar (lambda (c)
                               (eval:make-eval-case
                                :input question
-                               :expected (or (getf c :answer) "")))
+                               :expected (%gate-expected c)))
                             children))
              (dataset (eval:make-eval-dataset
                        :name "research-quality"
@@ -514,7 +597,7 @@
         (eval:run-eval dataset
                        (lambda (in)
                          (declare (ignore in))
-                         markdown)
+                         (or scored-text ""))
                        :scorers (list (eval:make-contains-scorer))))))
 
 (defun %verdict-from-run (run)
@@ -522,6 +605,11 @@
            (= (eval:eval-run-pass-count run) (eval:eval-run-n run)))
       :pass
       :fail))
+
+(defun %research-require-hitl-p (domain require-hitl)
+  (or require-hitl
+      (let ((prof (and (expert-domain-p domain) (expert-profile domain))))
+        (and (deployment-profile-p prof) (profile-require-hitl-p prof)))))
 
 (defun %result-extras (workspace)
   (list :workspace workspace
@@ -542,15 +630,19 @@
                                         journal task-id blackboard
                                         workspace store instructions
                                         tree-root
+                                        require-hitl
                                         (top-k 5))
   "Plan → spawn-child-task per sub-question → join :all → gap rounds →
    C3d extracted-document → A1 eval gate → C3e markdown (PDF if loaded).
    Fetched pages and workspace:// files land on a blackboard research
-   workspace (RAG + MCP resources). Whole run is under an A2 budget scope."
+   workspace (RAG + MCP resources). Whole run is under an A2 budget scope.
+   REQUIRE-HITL (or PROFILE-REQUIRE-HITL-P) checkpoints between rounds."
   (check-type domain expert-domain)
   (check-type question string)
   (let* ((max-rounds (or max-rounds 2))
          (run-id (or task-id (format nil "research/~a" (expert-name domain))))
+         (hitl-p (%research-require-hitl-p domain require-hitl))
+         (budget-scope (research-budget-scope run-id))
          (journal (%journal-for domain journal))
          (task (task:make-durable-task :id run-id :journal journal))
          (llm (wrap-research-llm (%llm-for domain llm) run-id :budget budget))
@@ -584,7 +676,11 @@
                          :completed))
                plist)
              (partial (reason kids)
-               (let* ((doc (%synthesize-document question kids :partial t))
+               (let* ((doc (%synthesize-document
+                            question kids
+                            :partial t
+                            :workspace workspace
+                            :budget-scope budget-scope))
                       (md (render-research-document doc :format :markdown)))
                  (report-workflow-progress
                   wf :board board :status :failed
@@ -637,7 +733,13 @@
                                    (lambda (q)
                                      (or (null (getf q :question))
                                          (zerop (length (getf q :question)))))
-                                   (getf gap-plist :subquestions)))))))
+                                   (getf gap-plist :subquestions)))))
+                        (when (and pending hitl-p)
+                          (await-approval
+                           (make-project-milestone
+                            :name (format nil "research-round-~d" round)
+                            :prompt (format nil "approve research round ~d" round))
+                           :task task))))
              (deliver ()
                (let* ((synth-plist
                        (task:with-durable-step
@@ -653,9 +755,12 @@
                                                          (llm:llm-response-text resp))
                                                     "")))
                                      (list :text text))))))
+                      (synth-text (or (getf synth-plist :text) ""))
                       (doc (%synthesize-document
                             question children
-                            :synthesis-text (getf synth-plist :text)))
+                            :synthesis-text synth-text
+                            :workspace workspace
+                            :budget-scope budget-scope))
                       (md (task:with-durable-step
                               ("render" :idempotency-key "research/render")
                             (%phase "render"
@@ -667,13 +772,16 @@
                              (%phase "gate"
                                      (lambda ()
                                        (let ((ev (%quality-gate
-                                                  question children md)))
+                                                  question children
+                                                  synth-text)))
                                          (list :mean (eval:eval-run-mean ev)
                                                :n (eval:eval-run-n ev)
                                                :pass-count
                                                (eval:eval-run-pass-count ev)
                                                :verdict (%verdict-from-run ev)))))))
-                      (verdict (or (getf run :verdict) :pass)))
+                      (verdict (if (eq (getf run :verdict) :pass)
+                                   :pass
+                                   :fail)))
                  (report-workflow-progress
                   wf :board board :status :completed
                   :summary (format nil "delivered ~a" verdict))
