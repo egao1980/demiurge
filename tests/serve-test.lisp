@@ -82,6 +82,8 @@
              (tags (getf (eval:eval-case-metadata case) :tags)))
         (ok (equal "echo: hi" (eval:eval-case-input case)))
         (ok (equal "better" (eval:eval-case-expected case)))
+        (ok (eq :train (eval:eval-case-role case)))
+        (ok (eq :human-feedback (eval:eval-case-source case)))
         (ok (member :human-feedback tags))
         (ok (find "fb-1" tags :test #'equal))
         (ok (find "echo" tags :test #'equal)))))

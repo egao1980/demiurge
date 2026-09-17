@@ -220,3 +220,215 @@
         (ok (= 1 (getf counts :select)))
         (ok (= 2 (getf counts :propose)))
         (ok (= 1 (getf counts :trial)))))))
+
+(deftest apply-ks-revision-materializes-prompt-and-chunk-config
+  (let* ((backend (llm:make-mock-llm-backend :prefix "kept: "))
+         (agent (agent:make-ai-agent :name "echo"
+                                     :backend backend
+                                     :instructions "OLD"))
+         (ks (make-agent-ks :name 'echo :agent agent))
+         (rev (make-ks-revision :prompt "NEW"
+                                :chunk-config '(:size 32 :overlap 4
+                                                :prefix "echo: ")))
+         (cand (apply-ks-revision ks rev)))
+    (ok (equal "OLD" (agent:ai-agent-instructions agent))
+        "original agent is not mutated")
+    (ok (equal "NEW" (agent:ai-agent-instructions
+                      (agent-ks-agent (revised-ks-base cand)))))
+    (ok (plusp (length (ks-revision-chunk-config (revised-ks-revision cand)))))
+    (ok (revised-ks-chunker cand)))
+  (let* ((ks (%script-ks 'echo (lambda (in) (format nil "old: ~a" in))))
+         (rev (make-ks-revision :prompt "pre:"
+                                :chunk-config '(:prefix "echo: ")))
+         (cand (apply-ks-revision ks rev))
+         (board (bb:make-blackboard)))
+    (bb:write-section board :prompt "hi")
+    (ok (equal "echo: hi" (bb:ks-execute cand board)))
+    (ok (equal '(:prefix "echo: ")
+               (parse-chunk-config (bb:read-section board :chunk-config))))))
+
+(deftest restricted-catalogue-is-installed-on-candidate-tools
+  (let ((cat (cap:make-catalogue :world)))
+    (cap:register-capability cat (make-instance 'cap:communication-capability))
+    (let* ((restricted (make-restricted-catalogue cat))
+           (agent (agent:make-ai-agent
+                   :name "tools"
+                   :backend (llm:make-mock-llm-backend :prefix "ok: ")
+                   :instructions "base"))
+           (ks (make-agent-ks :name 'tools :agent agent :catalogue cat))
+           (cand (apply-ks-revision ks (make-ks-revision :prompt "rev")
+                                    :catalogue restricted))
+           (tools (collect-agent-ks-tools
+                   (revised-ks-base cand)
+                   :catalogue (revised-ks-catalogue cand)))
+           (names (mapcar #'llm:llm-tool-name tools)))
+      (ok (restricted-catalogue-p (revised-ks-catalogue cand)))
+      (ok (restricted-catalogue-p (agent-ks-catalogue (revised-ks-base cand))))
+      (ok (not (find "communication/send-message" names :test #'equal)))
+      (let* ((*trial-restricted-catalogue* restricted)
+             (via-special (collect-agent-ks-tools ks)))
+        (ok (not (find "communication/send-message"
+                       (mapcar #'llm:llm-tool-name via-special)
+                       :test #'equal)))))))
+
+(deftest trial-does-not-leak-onto-root-board
+  (let* ((hits (list 0))
+         (ks (%script-ks 'echo
+                         (lambda (in)
+                           (let ((ksar *current-ksar*))
+                             (when ksar
+                               (incf (car hits))
+                               (let ((target (bb:ksar-blackboard ksar)))
+                                 (when target
+                                   (bb:write-section target :leaked t)))))
+                           (format nil "old: ~a" in))))
+         (cases (list (eval:make-eval-case :input "hi" :expected "echo: hi")))
+         (root (bb:make-blackboard))
+         (domain (%improve-domain :name "iso-root" :cases cases :ks ks)))
+    (bb:write-section root :sentinel "keep")
+    (let ((result (run-improvement-cycle
+                   domain
+                   :target ks
+                   :llm (%revision-llm "echo: ")
+                   :journal (task:make-in-memory-journal)
+                   :cycle-id "iso-root"
+                   :blackboard root
+                   :activity-floor 0)))
+      (ok (eq :promote (getf result :verdict)))
+      (ok (plusp (car hits))
+          "versioned KS ran through the fork scheduler (KSAR bound)")
+      (ok (equal "keep" (bb:read-section root :sentinel)))
+      (ok (not (bb:section-bound-p root :leaked)))
+      (ok (not (bb:section-bound-p root :prompt)))
+      (ok (not (bb:section-bound-p root :result)))
+      (ok (null (bb:list-watchers root)))
+      (ok (null (bb:list-ks root))))))
+
+(deftest trials-aggregate-all-repetitions
+  (let* ((n (list 0))
+         (ks (%script-ks 'echo
+                         (lambda (in)
+                           (if (eq *trial-force-variant* :candidate)
+                               (progn
+                                 (incf (car n))
+                                 (if (evenp (car n))
+                                     (format nil "echo: ~a" in)
+                                     "nope"))
+                               (format nil "old: ~a" in)))))
+         (cases (list (eval:make-eval-case :input "hi" :expected "echo: hi")))
+         (domain (%improve-domain :name "agg" :cases cases :ks ks))
+         (result (run-improvement-cycle
+                  domain
+                  :target ks
+                  :llm (%revision-llm "")
+                  :journal (task:make-in-memory-journal)
+                  :cycle-id "agg"
+                  :trials 3
+                  :activity-floor 0)))
+    (ok (= 3 (car n)) "candidate executed once per repetition")
+    (ok (= 3 (getf result :n-trials)))
+    (ok (= 1/3 (getf result :candidate-score))
+        "mean includes every repetition, not only the last (which failed)")
+    (ok (eq :promote (getf result :verdict)))
+    (ok (eq :promote (getf result :promotion-stage)))
+    (ok (null (getf result :rollback-p)))))
+
+(deftest paired-confidence-gate-rolls-back
+  (let* ((cases (list (eval:make-eval-case :input "hi" :expected "echo: hi")))
+         (domain (%improve-domain :name "conf" :cases cases))
+         (result (run-improvement-cycle
+                  domain
+                  :target (first (expert-ks-set domain))
+                  :llm (%revision-llm "echo: ")
+                  :journal (task:make-in-memory-journal)
+                  :cycle-id "conf"
+                  :trials 1
+                  :min-sample 1
+                  :confidence-threshold 95/100
+                  :activity-floor 0)))
+    (ok (eq :demote (getf result :verdict)))
+    (ok (getf result :rollback-p))
+    (ok (eq :shadow (getf result :promotion-stage)))
+    (ok (= 1 (getf result :candidate-score)))))
+
+(deftest search-and-holdout-never-overlap
+  (let* ((train (eval:make-eval-dataset
+                 :name "train" :role :train
+                 :cases (list (eval:make-eval-case :input "h" :expected "echo: h"
+                                                   :role :train))))
+         (holdout (eval:make-eval-dataset
+                   :name "hold" :role :holdout
+                   :cases (list (eval:make-eval-case :input "h" :expected "echo: h"
+                                                     :role :holdout))))
+         (domain (make-expert-domain
+                  :name "overlap"
+                  :ks-set (list (%script-ks 'echo
+                                            (lambda (in)
+                                              (format nil "old: ~a" in))))
+                  :eval-suites (list train holdout)
+                  :profile :personal)))
+    (ok (signals (run-improvement-cycle
+                  domain
+                  :target (first (expert-ks-set domain))
+                  :llm (%revision-llm "echo: ")
+                  :journal (task:make-in-memory-journal)
+                  :cycle-id "overlap"
+                  :activity-floor 0)
+                 'eval:holdout-overlap-error))))
+
+(deftest production-feedback-lands-on-train-not-holdout
+  (let* ((holdout (eval:make-eval-dataset
+                   :name "hold" :role :holdout
+                   :cases (list (eval:make-eval-case :input "gold" :expected "gold"
+                                                     :role :holdout))))
+         (domain (make-echo-expert :backend (mock-llm) :name "fb-hold"))
+         (hold-n (length (eval:eval-dataset-cases holdout))))
+    (setf (expert-eval-suites domain) (list holdout))
+    (ok (signals (eval:add-case holdout
+                                (eval:make-eval-case :input "fb" :expected "fb")
+                                :source :human-feedback)
+                 'eval:holdout-admission-error))
+    (let* ((new (record-feedback domain
+                                 :answer "echo: hi"
+                                 :correction "better"
+                                 :feedback-id "fb-hold-1"
+                                 :ks-id "echo"))
+           (train (find :train (expert-eval-suites domain)
+                        :key #'eval:eval-dataset-role)))
+      (ok (eq :train (eval:eval-dataset-role new)))
+      (ok (eq :train (eval:eval-dataset-role train)))
+      (ok (= hold-n (length (eval:eval-dataset-cases
+                             (find :holdout (expert-eval-suites domain)
+                                   :key #'eval:eval-dataset-role)))))
+      (let ((case (car (last (eval:eval-dataset-cases train)))))
+        (ok (eq :train (eval:eval-case-role case)))
+        (ok (eq :human-feedback (eval:eval-case-source case)))))))
+
+(deftest disjoint-holdout-is-used-for-promotion
+  (let* ((train (eval:make-eval-dataset
+                 :name "train" :role :train
+                 :cases (list (eval:make-eval-case
+                               :input "search" :expected "echo: search"
+                               :role :train))))
+         (holdout (eval:make-eval-dataset
+                   :name "hold" :role :holdout
+                   :cases (list (eval:make-eval-case
+                                 :input "hi" :expected "echo: hi"
+                                 :role :holdout))))
+         (domain (make-expert-domain
+                  :name "roles"
+                  :ks-set (list (%script-ks 'echo
+                                            (lambda (in)
+                                              (format nil "old: ~a" in))))
+                  :eval-suites (list train holdout)
+                  :profile :personal))
+         (result (run-improvement-cycle
+                  domain
+                  :target (first (expert-ks-set domain))
+                  :llm (%revision-llm "echo: ")
+                  :journal (task:make-in-memory-journal)
+                  :cycle-id "roles"
+                  :activity-floor 0)))
+    (ok (eq :promote (getf result :verdict)))
+    (ok (= 1 (getf result :candidate-score)))
+    (ok (= 0 (getf result :baseline-score)))))

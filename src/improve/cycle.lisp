@@ -46,60 +46,6 @@
               (setf best ks best-score agg))))))
     best))
 
-(defclass revised-ks (bb:knowledge-source)
-  ((base :initarg :base :accessor revised-ks-base :initform nil)
-   (revision :initarg :revision :accessor revised-ks-revision :initform nil)))
-
-(defun revised-ks-p (x)
-  (typep x 'revised-ks))
-
-(defun apply-ks-revision (ks revision)
-  "Install REVISION as a candidate wrapper around KS."
-  (let ((rev (coerce-ks-revision revision)))
-    (make-instance 'revised-ks
-                   :name (if (typep ks 'bb:knowledge-source)
-                             (bb:ks-name ks)
-                             'revised)
-                   :base ks
-                   :revision rev
-                   :priority (if (typep ks 'bb:knowledge-source)
-                                 (bb:ks-priority ks)
-                                 0))))
-
-(defmethod ks-watch-keys ((ks revised-ks))
-  (let ((base (revised-ks-base ks)))
-    (if (typep base 'bb:knowledge-source)
-        (ks-watch-keys base)
-        '(:prompt))))
-
-(defmethod bb:ks-precondition ((ks revised-ks) blackboard)
-  (let ((base (revised-ks-base ks)))
-    (if (typep base 'bb:knowledge-source)
-        (bb:ks-precondition base blackboard)
-        (bb:section-bound-p blackboard :prompt))))
-
-(defmethod bb:ks-execute ((ks revised-ks) blackboard)
-  (let* ((rev (revised-ks-revision ks))
-         (skill (and rev (ks-revision-skill-text rev)))
-         (input (cond
-                  ((bb:section-bound-p blackboard :prompt)
-                   (bb:read-section blackboard :prompt))
-                  (t nil))))
-    (if (and skill (plusp (length skill)))
-        (let ((out (if (stringp input)
-                       (concatenate 'string skill input)
-                       skill)))
-          (bb:write-section blackboard :result out)
-          out)
-        (let ((base (revised-ks-base ks)))
-          (when (and (agent-ks-p base) rev
-                     (plusp (length (or (ks-revision-prompt rev) ""))))
-            (setf (agent:ai-agent-instructions (agent-ks-agent base))
-                  (ks-revision-prompt rev)))
-          (if (typep base 'bb:knowledge-source)
-              (bb:ks-execute base blackboard)
-              nil)))))
-
 (defun %respond (variant input)
   "Run VARIANT on INPUT → actual output."
   (cond
@@ -138,6 +84,39 @@
 (defun %dataset-of (domain)
   (first (expert-eval-suites domain)))
 
+(defun %suite-by-role (domain role)
+  (find role (expert-eval-suites domain)
+        :key (lambda (ds)
+               (and (eval:eval-dataset-p ds) (eval:eval-dataset-role ds)))
+        :test #'eq))
+
+(defun %split-role (dataset role)
+  (when (and dataset (eval:eval-dataset-p dataset) role)
+    (let ((split (ignore-errors (eval:dataset-split dataset :role role))))
+      (when (and split (plusp (length (eval:eval-dataset-cases split))))
+        split))))
+
+(defun %search-dataset (domain dataset)
+  "Train (then dev) used for search. Never the promotion holdout."
+  (or (%suite-by-role domain :train)
+      (%split-role dataset :train)
+      (%suite-by-role domain :dev)
+      (%split-role dataset :dev)))
+
+(defun %promotion-dataset (domain dataset)
+  "Holdout used for gating, or NIL when the suite has no holdout role."
+  (or (%suite-by-role domain :holdout)
+      (%split-role dataset :holdout)))
+
+(defun %assert-search-holdout-disjoint (search holdout)
+  "Invariant: search/train data and the promotion holdout never overlap."
+  (when (and search holdout
+             (eval:eval-dataset-p search)
+             (eval:eval-dataset-p holdout)
+             (not (eq search holdout)))
+    (eval:assert-no-holdout-overlap search holdout))
+  t)
+
 (defun %eval-run-plist (run)
   (list :mean (if run (eval:eval-run-mean run) 0)
         :n (if run (eval:eval-run-n run) 0)
@@ -150,6 +129,9 @@
                       (list :input (and case (eval:eval-case-input case))
                             :expected (and case (eval:eval-case-expected case))
                             :metadata (and case (eval:eval-case-metadata case))
+                            :role (and case (eval:eval-case-role case))
+                            :source (and case (eval:eval-case-source case))
+                            :parent-version (and case (eval:eval-case-parent-version case))
                             :actual (eval:eval-case-result-actual r)
                             :verdict (and score (eval:eval-score-verdict score))
                             :value (and score (eval:eval-score-value score)))))
@@ -164,12 +146,73 @@
               :case (eval:make-eval-case
                      :input (getf row :input)
                      :expected (getf row :expected)
-                     :metadata (copy-list (getf row :metadata)))
+                     :metadata (copy-list (getf row :metadata))
+                     :role (getf row :role)
+                     :source (getf row :source)
+                     :parent-version (getf row :parent-version))
               :actual (getf row :actual)
               :score (eval:make-eval-score
                       :value (or (getf row :value) 0)
                       :verdict (or (getf row :verdict) :fail))))
            (getf plist :results))))
+
+(defun %merge-eval-runs (dataset runs)
+  (eval:make-eval-run
+   :dataset dataset
+   :results (mapcan (lambda (run)
+                      (copy-list (eval:eval-run-results run)))
+                    runs)))
+
+(defun %paired-from-runs (baseline-runs candidate-runs)
+  (let ((n (length baseline-runs))
+        (wins 0)
+        (ties 0)
+        (losses 0)
+        (delta-sum 0))
+    (mapc (lambda (b c)
+            (let ((d (- (eval:eval-run-mean c) (eval:eval-run-mean b))))
+              (incf delta-sum d)
+              (cond
+                ((> d 0) (incf wins))
+                ((< d 0) (incf losses))
+                (t (incf ties)))))
+          baseline-runs
+          candidate-runs)
+    (eval:make-paired-trial-result
+     :n n
+     :baseline-runs baseline-runs
+     :candidate-runs candidate-runs
+     :wins wins
+     :ties ties
+     :losses losses
+     :delta (if (zerop n) 0 (/ delta-sum n)))))
+
+(defun %paired-plist (paired)
+  (when paired
+    (list :n (eval:paired-trial-result-n paired)
+          :wins (eval:paired-trial-result-wins paired)
+          :ties (eval:paired-trial-result-ties paired)
+          :losses (eval:paired-trial-result-losses paired)
+          :delta (eval:paired-trial-result-delta paired)
+          :confidence (eval:paired-trial-result-confidence paired))))
+
+(defun %promotion-record-plist (record)
+  (when record
+    (list :stage (eval:promotion-record-stage record)
+          :rollback-p (eval:promotion-record-rollback-p record)
+          :reason (eval:promotion-record-reason record)
+          :from-stage (eval:promotion-record-from-stage record))))
+
+(defun %stage-promotion (pass &key (stage :shadow))
+  "Walk shadow → canary → promote, or emit a rollback marker."
+  (let ((start (or stage :shadow)))
+    (if pass
+        (list (eval:make-promotion-record :shadow)
+              (eval:make-promotion-record :canary)
+              (eval:make-promotion-record :promote))
+        (list (eval:make-promotion-record start)
+              (eval:make-rollback-marker
+               :from start :reason "gate failed")))))
 
 (defun %propose-revision (llm domain ks)
   (declare (ignore domain))
@@ -211,20 +254,100 @@
                           llm)
       (llm:make-mock-llm-backend)))
 
-(defvar *trial-restricted-catalogue* nil
-  "Restricted catalogue copy bound for the duration of a trial.")
+(defun %coerce-restricted-catalogue (catalogue)
+  (cond
+    ((null catalogue) nil)
+    ((restricted-catalogue-p catalogue) catalogue)
+    (t (make-restricted-catalogue catalogue))))
+
+(defun %root-fingerprint (bb)
+  (let ((root (bb:find-root-bb bb)))
+    (list :sections (mapcar (lambda (k)
+                              (cons k (bb:read-section root k :default :absent)))
+                            (sort (copy-list (bb:list-sections root))
+                                  #'string< :key #'string))
+          :watchers (sort (mapcar #'bb:watcher-id (bb:list-watchers root))
+                          #'string< :key #'string)
+          :ks (sort (mapcar #'bb:ks-name (bb:list-ks root))
+                    #'string< :key #'string))))
+
+(defun %assert-root-unchanged (root before &key cycle-id)
+  (let ((after (%root-fingerprint root)))
+    (unless (equal before after)
+      (restart-case
+          (error 'trial-isolation-error
+                 :message (format nil "root board changed during trial ~s"
+                                  cycle-id)
+                 :root root
+                 :before before
+                 :after after)
+        (continue ()
+          :report "Ignore the root-board leak and keep the trial scores"
+          after)))
+    after))
+
+(defun %prompt-key-for (ks)
+  (cond
+    ((agent-ks-p ks) (agent-ks-prompt-key ks))
+    ((and (revised-ks-p ks) (agent-ks-p (revised-ks-base ks)))
+     (agent-ks-prompt-key (revised-ks-base ks)))
+    (t :prompt)))
+
+(defun %result-key-for (ks)
+  (cond
+    ((agent-ks-p ks) (agent-ks-result-key ks))
+    ((and (revised-ks-p ks) (agent-ks-p (revised-ks-base ks)))
+     (agent-ks-result-key (revised-ks-base ks)))
+    (t :result)))
+
+(defun %install-trial-ks (cow vks restricted)
+  "Watch VKS on the fork only. REGISTER-KS would mutate the root registry.
+   The handler rebinds trial specials on the KSAR worker thread."
+  (bb:watch cow
+            :id (bb:ks-name vks)
+            :requires (or (ks-watch-keys vks) '(:prompt))
+            :priority (bb:ks-priority vks)
+            :handler (lambda (board ksar)
+                       (let ((*current-ksar* ksar)
+                             (*trial-restricted-catalogue* restricted)
+                             (*trial-force-variant*
+                              (versioned-ks-force-variant vks)))
+                         (when (bb:ks-precondition vks board)
+                           (bb:ks-postcondition
+                            vks board (bb:ks-execute vks board)))))))
+
+(defun %scheduler-respond (cow vks input &key (variant :current))
+  "Run the installed versioned KS through the fork's scheduler.
+   FORCE-VARIANT is stored on VKS so the worker thread sees it."
+  (let ((prompt-key (%prompt-key-for (versioned-ks-current vks)))
+        (result-key (%result-key-for (versioned-ks-current vks))))
+    (setf (versioned-ks-force-variant vks) variant)
+    (bb:remove-section cow result-key)
+    (bb:remove-section cow prompt-key)
+    (when (bb:section-bound-p cow :chunk-config)
+      (bb:remove-section cow :chunk-config))
+    (bb:write-section cow prompt-key input)
+    (bb:run-scheduler cow :until-empty t)
+    (or (and (bb:section-bound-p cow result-key)
+             (bb:read-section cow result-key))
+        (and (bb:section-bound-p cow :result)
+             (bb:read-section cow :result)))))
 
 (defun %run-trials (domain current candidate dataset &key trials wall-clock
-                     cycle-id catalogue)
-  (let ((n (max 1 (or trials 1)))
-        (baseline nil)
-        (cand-run nil)
-        (restricted (and catalogue (make-restricted-catalogue catalogue))))
+                     cycle-id catalogue blackboard)
+  "N isolated forks. Each installs VERSIONED-KS on the COW board and
+   scores both variants through the fork scheduler. All repetitions
+   are aggregated — the last run does not replace the earlier ones."
+  (declare (ignore domain))
+  (let* ((n (max 1 (or trials 1)))
+         (root (or blackboard (bb:make-blackboard)))
+         (restricted (%coerce-restricted-catalogue catalogue))
+         (baseline-runs nil)
+         (candidate-runs nil)
+         (before (%root-fingerprint root)))
     (dotimes (i n)
-      (let* ((board (bb:make-blackboard))
-             (ws (bb:fork-workspace board (format nil "trial-~a" i)))
+      (let* ((ws (bb:fork-workspace root (format nil "trial-~a-~a" cycle-id i)))
              (cow (bb:workspace-blackboard ws)))
-        (declare (ignore cow))
         (unwind-protect
              (let* ((*trial-restricted-catalogue* restricted)
                     (vks (make-versioned-ks
@@ -232,25 +355,40 @@
                           :current current
                           :candidate candidate
                           :cycle-id cycle-id)))
-               (declare (ignore vks))
+               (%install-trial-ks cow vks restricted)
                (flet ((once ()
-                        (values
-                         (eval:run-eval dataset
-                                        (lambda (in) (%respond current in)))
-                         (eval:run-eval dataset
-                                        (lambda (in) (%respond candidate in))))))
-                 (multiple-value-bind (b c)
-                     (call-with-wall-clock wall-clock #'once)
-                   (let ((ks-tag (string (bb:ks-name current))))
-                     (when b
-                       (demiurge::%observe-record "RECORD-EVAL-SCORE" ks-tag
-                                                  (eval:eval-run-mean b)))
-                     (when c
-                       (demiurge::%observe-record "RECORD-EVAL-SCORE" ks-tag
-                                                  (eval:eval-run-mean c))))
-                   (setf baseline b cand-run c))))
+                        (eval:run-paired-trials
+                         dataset
+                         (lambda (in)
+                           (%scheduler-respond cow vks in :variant :current))
+                         (lambda (in)
+                           (%scheduler-respond cow vks in
+                                               :variant :candidate))
+                         :n 1)))
+                 (let* ((paired (call-with-wall-clock wall-clock #'once))
+                        (b (first (eval:paired-trial-result-baseline-runs
+                                   paired)))
+                        (c (first (eval:paired-trial-result-candidate-runs
+                                   paired)))
+                        (ks-tag (string (bb:ks-name current))))
+                   (when b
+                     (demiurge::%observe-record "RECORD-EVAL-SCORE" ks-tag
+                                                (eval:eval-run-mean b))
+                     (push b baseline-runs))
+                   (when c
+                     (demiurge::%observe-record "RECORD-EVAL-SCORE" ks-tag
+                                                (eval:eval-run-mean c))
+                     (push c candidate-runs))
+                   (%assert-root-unchanged root before :cycle-id cycle-id))))
+          (ignore-errors (bb:unwatch cow (bb:ks-name current)))
           (ignore-errors (bb:discard-workspace ws)))))
-    (values baseline cand-run)))
+    (%assert-root-unchanged root before :cycle-id cycle-id)
+    (let* ((baseline-runs (nreverse baseline-runs))
+           (candidate-runs (nreverse candidate-runs))
+           (paired (%paired-from-runs baseline-runs candidate-runs)))
+      (values (%merge-eval-runs dataset baseline-runs)
+              (%merge-eval-runs dataset candidate-runs)
+              paired))))
 
 (defun %decide-verdict (pass cycle-id)
   (let ((default (if pass :promote :demote)))
@@ -270,14 +408,29 @@
         :report "Defer the decision"
         :defer))))
 
+(defun %paired-from-plist (plist)
+  (when plist
+    (eval:make-paired-trial-result
+     :n (or (getf plist :n) 0)
+     :wins (or (getf plist :wins) 0)
+     :ties (or (getf plist :ties) 0)
+     :losses (or (getf plist :losses) 0)
+     :delta (or (getf plist :delta) 0)
+     :confidence (getf plist :confidence))))
+
 (defun run-improvement-cycle (domain &key target llm journal task-id cycle-id
                                        (trials 1) wall-clock budget
                                        (activity-floor 1) (window 5)
                                        skill-store blackboard
                                        require-hitl
                                        (gate (default-improve-gate))
+                                       (min-sample 1)
+                                       (confidence-threshold 0)
+                                       (promotion-stage :shadow)
                                        history)
   "Durable select → propose → trial → gate → promote/demote.
+   Trials run the installed versioned KS through a COW-fork scheduler.
+   Promotion uses the holdout split; search/train never overlaps holdout.
    Restarts PROMOTE / DEMOTE / DEFER. Corporate HITL is off by default."
   (check-type domain expert-domain)
   (let* ((cycle-id (or cycle-id
@@ -289,6 +442,7 @@
          (llm (wrap-llm-budget (%llm-for domain llm) cycle-id :budget budget))
          (hist (or history *ks-eval-history*))
          (board (or blackboard (bb:make-blackboard)))
+         (restricted (%coerce-restricted-catalogue (expert-catalogue domain)))
          (result nil))
     (flet ((finish (verdict &optional extra)
              (setf result (append (list :verdict verdict
@@ -339,40 +493,67 @@
                                     (ks-revision-plist
                                      (%propose-revision llm domain current))))))
                        (revision (coerce-ks-revision revision-plist))
-                       (candidate (apply-ks-revision current revision))
-                       (dataset (%dataset-of domain)))
+                       (*trial-restricted-catalogue* restricted)
+                       (candidate (apply-ks-revision current revision
+                                                     :catalogue restricted))
+                       (raw-dataset (%dataset-of domain))
+                       (search (%search-dataset domain raw-dataset))
+                       (holdout (%promotion-dataset domain raw-dataset))
+                       (dataset (or holdout raw-dataset)))
                   (unless dataset
                     (finish :skipped (list :reason :no-dataset))
                     (task:complete-task task result)
                     (return-from run-improvement-cycle result))
+                  (when holdout
+                    (%assert-search-holdout-disjoint search holdout))
                   (let ((trial-plist
                          (task:with-durable-step
                              ("trial" :idempotency-key "improve/trial")
                            (%phase "trial"
                                    (lambda ()
-                                     (multiple-value-bind (base cand)
+                                     (multiple-value-bind (base cand paired)
                                          (%run-trials
                                           domain current candidate dataset
                                           :trials trials
                                           :wall-clock wall-clock
                                           :cycle-id cycle-id
-                                          :catalogue (expert-catalogue domain))
+                                          :catalogue restricted
+                                          :blackboard board)
                                        (list :baseline (%eval-run-plist base)
                                              :candidate (%eval-run-plist cand)
+                                             :paired (%paired-plist paired)
                                              :eval-run-id
                                              (format nil "~a/eval" cycle-id))))))))
                     (let* ((baseline-run (%run-from-plist
                                           dataset (getf trial-plist :baseline)))
                            (candidate-run (%run-from-plist
                                            dataset (getf trial-plist :candidate)))
-                           (pass (eval:gate-passes-p gate baseline-run
-                                                     candidate-run))
+                           (paired (or (%paired-from-plist
+                                        (getf trial-plist :paired))
+                                       (eval:make-paired-trial-result :n 0)))
+                           (score-pass (eval:gate-passes-p gate baseline-run
+                                                           candidate-run))
+                           (paired-pass (eval:paired-trial-gate-passes-p
+                                         paired
+                                         :min-sample min-sample
+                                         :confidence-threshold
+                                         confidence-threshold))
+                           (pass (and score-pass paired-pass))
+                           (records (%stage-promotion
+                                     pass :stage promotion-stage))
+                           (final-record (car (last records)))
                            (gate-plist
                             (task:with-durable-step
                                 ("gate" :idempotency-key "improve/gate")
                               (%phase "gate"
                                       (lambda ()
                                         (list :pass (if pass t nil)
+                                              :score-pass (if score-pass t nil)
+                                              :paired-pass (if paired-pass t nil)
+                                              :paired (%paired-plist paired)
+                                              :promotion
+                                              (mapcar #'%promotion-record-plist
+                                                      records)
                                               :baseline-mean
                                               (eval:eval-run-mean baseline-run)
                                               :candidate-mean
@@ -390,6 +571,11 @@
                                                       domain require-hitl))
                                             (unless (%hitl-approve cycle-id)
                                               (setf v :demote)))
+                                          (when (and (eq v :promote)
+                                                     final-record
+                                                     (eval:rollback-marker-p
+                                                      final-record))
+                                            (setf v :demote))
                                           (save-promoted-skill
                                            domain revision
                                            :cycle-id cycle-id
@@ -413,7 +599,19 @@
                                     :baseline-score
                                     (getf gate-plist :baseline-mean)
                                     :candidate-score
-                                    (getf gate-plist :candidate-mean)))
+                                    (getf gate-plist :candidate-mean)
+                                    :n-trials (eval:paired-trial-result-n paired)
+                                    :paired-confidence
+                                    (eval:paired-trial-result-confidence paired)
+                                    :promotion-stage
+                                    (and final-record
+                                         (eval:promotion-record-stage
+                                          final-record))
+                                    :rollback-p
+                                    (and final-record
+                                         (eval:promotion-record-rollback-p
+                                          final-record)
+                                         t)))
                       (task:complete-task task result)
                       result)))))
           (defer ()

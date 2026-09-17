@@ -11,7 +11,6 @@
                "conversation-protocol"
                "conversation-backend-sql"
                "steer-protocol"
-               "eval-protocol"
                "event-protocol"
                "log-protocol"
                "rag-protocol"
@@ -20,6 +19,7 @@
                "rag-backend-sql"
                "llm-protocol"
                "llm-protocol/router"
+               (:version "eval-protocol" "0.2.0")
                (:version "task-protocol" "0.2.0")
                "task-backend-sql"
                "sql-protocol"
@@ -68,7 +68,8 @@
   :description "Self-improvement cycle for demiurge (versioned-ks + eval gates)"
   :author "egao1980"
   :license "MIT"
-  :depends-on ("demiurge" "schema-protocol")
+  :depends-on ("demiurge" "schema-protocol"
+               (:version "eval-protocol" "0.2.0"))
   :serial t
   :pathname "src/improve"
   :components ((:file "package")
@@ -145,7 +146,7 @@
                "websearch-protocol"
                "doc-extract-protocol"
                "schema-protocol"
-               "eval-protocol"
+               (:version "eval-protocol" "0.2.0")
                "rag-protocol"
                "llm-protocol"
                "llm-protocol/schema"
@@ -174,7 +175,7 @@
                "schema-protocol"
                "toml-protocol"
                "steer-protocol"
-               "eval-protocol"
+               (:version "eval-protocol" "0.2.0")
                "task-protocol"
                "doc-extract-protocol"
                "llm-protocol"

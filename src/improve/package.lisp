@@ -17,6 +17,10 @@
    #:improve-error
    #:no-improvement-target
    #:trial-timeout
+   #:trial-isolation-error
+   #:trial-isolation-error-root
+   #:trial-isolation-error-before
+   #:trial-isolation-error-after
    #:promotion-approval-required
    #:improvement-decision
    #:improvement-decision-verdict
@@ -32,6 +36,7 @@
    #:ks-revision-prompt
    #:ks-revision-chunk-config
    #:coerce-ks-revision
+   #:parse-chunk-config
 
    #:versioned-ks
    #:versioned-ks-p
@@ -41,8 +46,11 @@
    #:versioned-ks-split-ratio
    #:versioned-ks-cycle-id
    #:versioned-ks-observations
+   #:versioned-ks-force-variant
    #:select-variant
    #:*current-ksar*
+   #:*trial-force-variant*
+   #:*trial-restricted-catalogue*
    #:record-variant-observation
 
    #:tag-operation
@@ -71,6 +79,10 @@
    #:apply-ks-revision
    #:revised-ks
    #:revised-ks-p
+   #:revised-ks-base
+   #:revised-ks-revision
+   #:revised-ks-catalogue
+   #:revised-ks-chunker
    #:*improve-phase-hook*
    #:run-improvement-cycle
    #:default-improve-gate)
@@ -96,6 +108,14 @@
   (:report (lambda (c s)
              (format s "improvement trial exceeded wall-clock~@[ (~As)~]"
                      (trial-timeout-seconds c)))))
+
+(define-condition trial-isolation-error (improve-error)
+  ((root :initarg :root :reader trial-isolation-error-root :initform nil)
+   (before :initarg :before :reader trial-isolation-error-before :initform nil)
+   (after :initarg :after :reader trial-isolation-error-after :initform nil))
+  (:report (lambda (c s)
+             (format s "improvement trial leaked onto the root board~@[: ~A~]"
+                     (demiurge-error-message c)))))
 
 (define-condition promotion-approval-required (improve-error)
   ((cycle-id :initarg :cycle-id :reader promotion-approval-cycle-id
