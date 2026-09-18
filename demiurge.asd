@@ -20,8 +20,8 @@
                "llm-protocol"
                "llm-protocol/router"
                (:version "eval-protocol" "0.2.0")
-               (:version "task-protocol" "0.2.0")
-               "task-backend-sql"
+               (:version "task-protocol" "0.2.1")
+               (:version "task-backend-sql" "0.1.1")
                "sql-protocol"
                "telemetry-protocol"
                "cl-stack-config"
