@@ -110,12 +110,13 @@
   (demiurge-config-session-window-turns (current-demiurge-config)))
 
 (defun %ensure-agent-memory (ks agent)
+  "Attach a memory object if the agent has none. Session identity is
+   passed per run — never key shared domain memory by KS name."
   (unless (agent:ai-agent-memory agent)
     (setf (agent:ai-agent-memory agent)
           (or (agent-ks-memory ks)
               (conv:make-window-memory
-               :window-size (%session-window-turns)
-               :session (string (bb:ks-name ks))))))
+               :window-size (%session-window-turns)))))
   (agent:ai-agent-memory agent))
 
 (defun %ensure-agent-steering (ks agent)
@@ -135,6 +136,39 @@
       (lambda ()
         (apply #'agent:run-ai-agent agent prompt keys)))))
 
+(defun %turn-mentions-p (turns needle)
+  (let ((needle (and needle (princ-to-string needle))))
+    (and needle
+         (plusp (length needle))
+         (some (lambda (tr)
+                 (let ((text (or (ignore-errors (llm:turn-text tr))
+                                 (ignore-errors (princ-to-string tr)))))
+                   (and text (search needle text))))
+               (if (listp turns) turns (and turns (list turns)))))))
+
+(defun %record-session-exchange (ks prompt run session)
+  "Persist prompt+result on SESSION when the agent loop remembered nothing
+   usable. run-ai-agent :replace t with empty AGENT-RUN-TURNS would otherwise
+   leave an isolated-but-empty store (H6 CI)."
+  (when (and session (plusp (length (string session))))
+    (let* ((agent (agent-ks-agent ks))
+           (mem (%ensure-agent-memory ks agent))
+           (store (and mem (conv:memory-store mem)))
+           (existing (and store (ignore-errors (conv:load-session store session))))
+           (needle (let ((s (princ-to-string (or prompt ""))))
+                     (subseq s 0 (min (length s) 32))))
+           (text (cond
+                   ((and run (agent:agent-run-p run))
+                    (or (agent:agent-run-text run) ""))
+                   ((stringp run) run)
+                   (t ""))))
+      (when (and mem store (plusp (length needle))
+                 (not (%turn-mentions-p existing needle)))
+        (conv:remember mem
+                       (list (llm:user-turn (princ-to-string prompt))
+                             (llm:assistant-turn (princ-to-string text)))
+                       :session session)))))
+
 (defun %execute-agent-ks (ks blackboard)
   (let* ((agent (agent-ks-agent ks))
          (prompt (bb:read-section blackboard (agent-ks-prompt-key ks)))
@@ -149,11 +183,14 @@
                  :steering steering
                  :mcp-peer (agent-ks-mcp-peer ks))))
     (%ensure-agent-memory ks agent)
-    (let ((run (call-with-event-loop
-                (lambda ()
-                  (%run-ai-agent agent prompt
-                                 :tools tools
-                                 :durability (agent-ks-durability ks))))))
+    (let* ((session (current-request-session-key))
+           (run (call-with-event-loop
+                 (lambda ()
+                   (%run-ai-agent agent prompt
+                                  :tools tools
+                                  :session session
+                                  :durability (agent-ks-durability ks))))))
+      (%record-session-exchange ks prompt run session)
       (bb:write-section blackboard
                        (agent-ks-result-key ks)
                        (or (agent:agent-run-text run) run))

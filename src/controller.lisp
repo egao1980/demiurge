@@ -28,8 +28,7 @@
               (conv:make-window-memory
                :store (profile-session-store profile)
                :window-size (demiurge-config-session-window-turns
-                             (%config-for domain))
-               :session (tenant-session-id (string (bb:ks-name ks))))))))
+                             (%config-for domain)))))))
   ks)
 
 (defun register-expert-ks (blackboard domain)
@@ -79,11 +78,22 @@
      (loop for (key value) on trigger by #'cddr
            do (bb:write-section blackboard key value)))))
 
+(defun %bind-request-session (handler)
+  "Close over the request-thread session. KSAR workers do not inherit specials."
+  (if handler
+      (let ((session (or *request-session* (make-request-session))))
+        (lambda (board ksar)
+          (call-with-request-session session
+            (lambda ()
+              (funcall handler board ksar)))))
+      handler))
+
 (defmethod bb:enqueue-ksar :around (bb ksar)
-  "Bind *CURRENT-KSAR* for every activation, including continuations."
+  "Bind *CURRENT-KSAR* and the captured request-session on the worker."
   (let ((inner (bb:ksar-handler ksar)))
     (when inner
-      (setf (bb:ksar-handler ksar) (%bind-current-ksar inner))))
+      (setf (bb:ksar-handler ksar)
+            (%bind-current-ksar (%bind-request-session inner)))))
   (call-next-method))
 
 (defmethod bb:enqueue-ksar :after (bb ksar)
@@ -97,28 +107,29 @@
    KSAR execution is journaled via CALL-WITH-DURABLE-KSAR when a journal is attached.
    Explicit RUN-ID resumes that execution identity; otherwise the board's
    existing run id is kept (minted on first attach)."
-  (let* ((board (controller-blackboard controller))
-         (domain (controller-domain controller))
-         (stop (controller-stop-section controller))
-         (cfg (%config-for domain))
-         (timeout (or timeout (demiurge-config-ksar-timeout-seconds cfg)))
-         (journal (bbj:board-journal board))
-         (task (and journal (bbj:board-journal-task board))))
-    (assign-board-run-id board :domain domain :run-id run-id)
-    (when (and stop (bb:section-bound-p board stop))
-      (return-from run-controller board))
-    (flet ((run ()
-             (%write-trigger board trigger)
-             (record-agenda-depth board)
-             (bb:run-scheduler board :until-empty until-empty :timeout timeout)
-             (record-agenda-depth board)
-             board))
-      (if (and journal task)
-          (let ((task:*task* task)
-                (task:*journal* journal))
-            (run))
-          (run)))
-    board))
+  (with-request-session ()
+    (let* ((board (controller-blackboard controller))
+           (domain (controller-domain controller))
+           (stop (controller-stop-section controller))
+           (cfg (%config-for domain))
+           (timeout (or timeout (demiurge-config-ksar-timeout-seconds cfg)))
+           (journal (bbj:board-journal board))
+           (task (and journal (bbj:board-journal-task board))))
+      (assign-board-run-id board :domain domain :run-id run-id)
+      (when (and stop (bb:section-bound-p board stop))
+        (return-from run-controller board))
+      (flet ((run ()
+               (%write-trigger board trigger)
+               (record-agenda-depth board)
+               (bb:run-scheduler board :until-empty until-empty :timeout timeout)
+               (record-agenda-depth board)
+               board))
+        (if (and journal task)
+            (let ((task:*task* task)
+                  (task:*journal* journal))
+              (run))
+            (run)))
+      board)))
 
 (defun run-expert (domain &key board trigger timeout stop-section
                             max-concurrency journal profile run-id)

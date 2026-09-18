@@ -29,6 +29,7 @@
                     (#:ldap #:ldap-protocol)
                     (#:http.p #:http-protocol)
                     (#:http.async #:http-backend-async)
-                    (#:pathlib #:cl-stack-pathlib)))
+                    (#:pathlib #:cl-stack-pathlib)
+                    (#:bt #:bordeaux-threads)))
 
 (in-package #:demiurge/tests)

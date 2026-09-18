@@ -1,5 +1,8 @@
 (in-package #:demiurge/serve)
 
+(defvar *feedback-lock* (bt:make-lock "demiurge-feedback")
+  "Serializes ADD-CASE / expert-eval-suites mutation.")
+
 (defun make-feedback-id (&optional seed)
   "Stable-enough answer span id for a served reply."
   (format nil "fb-~a-~a"
@@ -28,26 +31,27 @@
   "ADD-CASE on DOMAIN's train suite with :SOURCE :HUMAN-FEEDBACK :ROLE :TRAIN.
    Production feedback cannot enter the promotion holdout."
   (check-type domain expert-domain)
-  (let* ((ds (%ensure-feedback-dataset domain))
-         (fid (or feedback-id (make-feedback-id)))
-         (ks (or ks-id
-                 (let ((first (first (expert-ks-set domain))))
-                   (and first (bb:ks-name first)))))
-         (tags (remove nil (list :human-feedback ks fid)))
-         (case (eval:make-eval-case
-                :input (or answer text "")
-                :expected (or correction text answer "")
-                :role :train
-                :source :human-feedback
-                :metadata (list :tags tags
-                                :rating rating
-                                :feedback-id fid
-                                :ks-id ks
-                                :source :human-feedback)))
-         (new (eval:add-case ds case :source :human-feedback :role :train)))
-    (setf (expert-eval-suites domain)
-          (cons new (remove ds (copy-list (expert-eval-suites domain)))))
-    new))
+  (bt:with-lock-held (*feedback-lock*)
+    (let* ((ds (%ensure-feedback-dataset domain))
+           (fid (or feedback-id (make-feedback-id)))
+           (ks (or ks-id
+                   (let ((first (first (expert-ks-set domain))))
+                     (and first (bb:ks-name first)))))
+           (tags (remove nil (list :human-feedback ks fid)))
+           (case (eval:make-eval-case
+                  :input (or answer text "")
+                  :expected (or correction text answer "")
+                  :role :train
+                  :source :human-feedback
+                  :metadata (list :tags tags
+                                  :rating rating
+                                  :feedback-id fid
+                                  :ks-id ks
+                                  :source :human-feedback)))
+           (new (eval:add-case ds case :source :human-feedback :role :train)))
+      (setf (expert-eval-suites domain)
+            (cons new (remove ds (copy-list (expert-eval-suites domain)))))
+      new)))
 
 (defun %ht-get (table &rest keys)
   (cond

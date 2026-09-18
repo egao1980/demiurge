@@ -1,17 +1,22 @@
 (in-package #:demiurge/serve)
 
-(defun ask-expert (domain prompt &key board timeout)
-  "Run DOMAIN on PROMPT. → (values result-text feedback-id board)."
+(defun ask-expert (domain prompt &key board timeout conversation-id
+                                   transport session)
+  "Run DOMAIN on PROMPT. → (values result-text feedback-id board).
+   Conversation memory is keyed by the request session, not the KS name."
   (check-type domain expert-domain)
-  (let* ((board (or board (bb:make-blackboard)))
-         (fid (make-feedback-id))
-         (ran (run-expert domain
-                          :board board
-                          :trigger (list :prompt prompt)
-                          :timeout timeout))
-         (text (bb:read-section ran :result :default nil)))
-    (bb:write-section ran :feedback-id fid)
-    (values text fid ran)))
+  (with-request-session (session :conversation-id conversation-id
+                                 :transport (or transport *request-transport*
+                                                :stdio))
+    (let* ((board (or board (bb:make-blackboard)))
+           (fid (make-feedback-id))
+           (ran (run-expert domain
+                            :board board
+                            :trigger (list :prompt prompt)
+                            :timeout timeout))
+           (text (bb:read-section ran :result :default nil)))
+      (bb:write-section ran :feedback-id fid)
+      (values text fid ran))))
 
 (defun make-ask-expert-tool (domain)
   (mcp:make-mcp-tool
@@ -23,11 +28,16 @@
                   "required" (vector "prompt")
                   "properties"
                   (mcp:json-object
-                   "prompt" (mcp:json-object "type" "string")))
+                   "prompt" (mcp:json-object "type" "string")
+                   "conversation_id" (mcp:json-object "type" "string")))
    :handler (lambda (args)
-              (let ((prompt (or (%ht-get args "prompt" :prompt) "")))
+              (let ((prompt (or (%ht-get args "prompt" :prompt) ""))
+                    (cid (%ht-get args "conversation_id" :conversation-id
+                                  "conversation-id" :conversation_id)))
                 (multiple-value-bind (text fid)
-                    (ask-expert domain prompt)
+                    (ask-expert domain prompt
+                                :conversation-id cid
+                                :transport (or *request-transport* :stdio))
                   (mcp:tool-result
                    (list (mcp:make-text-content
                           (format nil "~a~%feedback-id: ~a"

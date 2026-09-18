@@ -195,6 +195,23 @@
    #:tenant-task-id
    #:tenant-corpus-name
    #:tenant-budget-scope
+   #:*request-session*
+   #:*request-transport*
+   #:*conversation-id*
+   #:request-session
+   #:request-session-p
+   #:request-session-principal
+   #:request-session-tenant
+   #:request-session-transport
+   #:request-session-conversation-id
+   #:make-request-session
+   #:merge-request-session
+   #:request-session-key
+   #:current-request-session
+   #:current-request-session-key
+   #:fresh-conversation-id
+   #:call-with-request-session
+   #:with-request-session
    #:*principal*
    #:*principal-roles*
    #:*principal-catalogue*

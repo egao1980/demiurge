@@ -69,7 +69,8 @@
   :author "egao1980"
   :license "MIT"
   :depends-on ("demiurge" "schema-protocol"
-               (:version "eval-protocol" "0.2.0"))
+               (:version "eval-protocol" "0.2.0")
+               "bordeaux-threads")
   :serial t
   :pathname "src/improve"
   :components ((:file "package")
@@ -106,7 +107,8 @@
                "mcp-backend-stdio"
                "mcp-backend-streamable-http"
                "a2a-backend-jsonrpc"
-               "ag-ui-backend-sse")
+               "ag-ui-backend-sse"
+               "bordeaux-threads")
   :serial t
   :pathname "src/serve"
   :components ((:file "package")

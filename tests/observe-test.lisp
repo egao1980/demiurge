@@ -86,7 +86,14 @@
     (ok (>= (tel:telemetry-metric-value (first duration)) 0))
     (ok (find-if (lambda (m) (plusp (tel:telemetry-metric-value m)))
                  depth)
-        "queue-depth snapshot includes a non-zero sample")))
+        "queue-depth snapshot includes a non-zero sample")
+    (ok (find-if (lambda (m)
+                   (equal "ok"
+                          (loop for (k v) on (tel:telemetry-metric-attributes m)
+                                by #'cddr
+                                when (equal k "demiurge.outcome") return v)))
+                 duration)
+        "successful KSAR records outcome=ok")))
 
 (deftest ingest-and-improve-record-taxonomy-counters
   (let* ((backend (apply-personal-observability

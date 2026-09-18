@@ -284,9 +284,12 @@
       (or (versioned-ks-candidate vks) (versioned-ks-current vks))
       (versioned-ks-current vks)))
 
+(defvar *observation-lock* (bt2:make-lock "demiurge-observations")
+  "Serializes appends to VERSIONED-KS-OBSERVATIONS.")
+
 (defun record-variant-observation (vks variant request actual)
   "Record an eval-protocol observation: case = request, actual = output,
-   tag = variant + KS id."
+   tag = variant + KS id. Append-only under *OBSERVATION-LOCK*."
   (let ((obs (eval:make-eval-case-result
               :case (eval:make-eval-case
                      :input request
@@ -295,7 +298,8 @@
                                      :ks (bb:ks-name vks)
                                      :cycle-id (versioned-ks-cycle-id vks)))
               :actual actual)))
-    (push obs (versioned-ks-observations vks))
+    (bt2:with-lock-held (*observation-lock*)
+      (push obs (versioned-ks-observations vks)))
     (demiurge::%observe-record "RECORD-EVAL-SCORE"
                                (bb:ks-name vks)
                                (if actual 1 0))

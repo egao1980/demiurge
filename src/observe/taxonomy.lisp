@@ -33,7 +33,8 @@
   "Counter of LLM spend (currency units). Attributes: demiurge.expert, demiurge.scope.")
 
 (defparameter +metric-ksar-duration+ "demiurge.ksar.duration"
-  "Histogram of KSAR execute wall time in seconds. Attribute: demiurge.ks.")
+  "Histogram of KSAR execute wall time in seconds.
+   Attributes: demiurge.ks, demiurge.outcome (ok|error).")
 
 (defparameter +metric-llm-latency+ "demiurge.llm.latency"
   "Histogram of LLM generate latency in seconds. Attributes: demiurge.expert, demiurge.scope.")
@@ -126,12 +127,14 @@
                   latency :attributes attrs))
     tokens))
 
-(defun record-ksar-duration (ks start-internal)
-  "Record KSAR wall time since START-INTERNAL on the duration histogram."
+(defun record-ksar-duration (ks start-internal &key (outcome :ok))
+  "Record KSAR wall time since START-INTERNAL. OUTCOME is :ok or :error."
   (let ((attrs (list "demiurge.ks"
                      (if (and ks (typep ks 'bb:knowledge-source))
                          (string (bb:ks-name ks))
-                         (string ks)))))
+                         (string ks))
+                     "demiurge.outcome"
+                     (string-downcase (string outcome)))))
     (tel:record (%instrument +metric-ksar-duration+ :histogram
                              :unit "s" :boundaries +latency-boundaries+)
                 (%elapsed-seconds start-internal)
