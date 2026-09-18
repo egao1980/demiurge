@@ -173,3 +173,11 @@
       (ok (profile-chunker profile))
       (ok (profile-rag-store profile))
       (ok (profile-llm-catalog profile)))))
+
+(deftest event-from-plist-is-not-process-wide-patched
+  "H5: persistence must not replace TASK-PROTOCOL:EVENT-FROM-PLIST.
+   A vector is never a plist — the 0.2.1 codec (DECODE-EVENT) owns JSON."
+  (ok (not (fboundp 'demiurge::%install-event-from-plist-compat)))
+  (ok (not (boundp 'demiurge::*event-from-plist-compat*)))
+  (ok (signals (task-protocol:event-from-plist #("a" "b"))
+               'type-error)))
