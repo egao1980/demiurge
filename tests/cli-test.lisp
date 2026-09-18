@@ -137,6 +137,34 @@
           (ok (= 0 status))
           (ok (find-expert "echo")))))))
 
+(deftest cli-demo-mock-research-plan
+  "Mock-tier demo research must emit a plan without the #< reader error."
+  (with-clean-registry
+    (with-tmp-dir (tmp)
+      (let ((expert (merge-pathnames "expert.toml" tmp))
+            (demo (merge-pathnames "demo.toml" tmp))
+            (queries (merge-pathnames "queries.md" tmp)))
+        (uiop:copy-file (%echo-toml) expert)
+        (with-open-file (out demo :direction :output :if-exists :supersede
+                             :if-does-not-exist :create)
+          (write-string "expert = \"expert.toml\"
+command = \"research\"
+queries = \"queries.md\"
+llm = \"mock\"
+websearch = \"mock\"
+narration = \"quiet\"
+" out))
+        (with-open-file (out queries :direction :output :if-exists :supersede
+                             :if-does-not-exist :create)
+          (write-string "research: CL expert systems~%" out))
+        (multiple-value-bind (status stdout err)
+            (%run-cli (list "demo" (namestring tmp)))
+          (let ((blob (string-downcase (format nil "~a~%~a" stdout err))))
+            (ok (= 0 status) (format nil "~a~%~a" stdout err))
+            (ok (not (search "illegal sharp" blob)))
+            (ok (not (search "#<" stdout))
+                "demo research stdout has no unreadable #< print")))))))
+
 (deftest cli-demo-toml-smoke
   (with-clean-registry
     (with-tmp-dir (tmp)

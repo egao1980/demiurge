@@ -3,89 +3,17 @@
 (defparameter *research-questions*
   '("What is KSAR?" "What is a blackboard?" "What is a journal?"))
 
-(defun %turns-text (turns)
-  (cond
-    ((stringp turns) turns)
-    ((listp turns)
-     (with-output-to-string (s)
-       (dolist (tn turns)
-         (write-string (if (stringp tn) tn (llm:turn-text tn)) s))))
-    (t (princ-to-string turns))))
-
 (defun %research-llm (&key (questions *research-questions*)
                            gap-once
                            (include-answers-in-synthesis t)
                            synthesis-text)
-  "Scripted research LLM.
+  "Scripted research LLM (product MAKE-RESEARCH-MOCK-LLM).
    GAP-ONCE (string) is emitted as a new subquestion on the first gap call.
    INCLUDE-ANSWERS-IN-SYNTHESIS nil omits ANSWER: lines so the A1 gate fails."
-  (let ((gap-remaining (if gap-once 1 0))
-        (gap-q (if (stringp gap-once) gap-once "What is a restart?"))
-        (all-qs (if (and gap-once (stringp gap-once))
-                    (append questions (list gap-once))
-                    questions)))
-    (llm:make-mock-llm-backend
-     :handler
-     (lambda (backend turns &key &allow-other-keys)
-       (declare (ignore backend))
-       (let* ((text (%turns-text turns))
-              (sub-pos (search "Subquestion: " text))
-              (sub (when sub-pos
-                     (let* ((start (+ sub-pos (length "Subquestion: ")))
-                            (end (or (position #\Newline text :start start)
-                                     (length text))))
-                       (string-trim '(#\Space #\Tab #\Return)
-                                    (subseq text start end)))))
-              (q (or (find sub all-qs :test #'string-equal)
-                     (find-if (lambda (q) (search q text)) all-qs))))
-         (cond
-           ((search "Gap analysis" text)
-            (if (plusp gap-remaining)
-                (progn
-                  (decf gap-remaining)
-                  (llm:make-llm-response
-                   :parts (list (llm:make-llm-text-part :text "gap"))
-                   :output (make-research-plan
-                            :question "q"
-                            :subquestions
-                            (list (make-research-subquestion
-                                   :id "gap-1"
-                                   :question gap-q)))))
-                (llm:make-llm-response
-                 :parts (list (llm:make-llm-text-part :text "none"))
-                 :output (make-research-plan :question "q" :subquestions nil))))
-           ((search "Decompose" text)
-            (llm:make-llm-response
-             :parts (list (llm:make-llm-text-part :text "plan"))
-             :output (make-research-plan
-                      :question "CL expert systems"
-                      :subquestions
-                      (loop for q in questions
-                            for i from 1
-                            collect (make-research-subquestion
-                                     :id (format nil "q~d" i)
-                                     :question q)))))
-           ((or (search "ONE subquestion" text)
-                (search "research child" text)
-                (search "Subquestion:" text))
-            (llm:make-llm-response
-             :parts (list (llm:make-llm-text-part
-                           :text (format nil "ANSWER:~a [~a]"
-                                         (or q "unknown")
-                                         (if q
-                                             (format nil "src-~a"
-                                                     (substitute #\- #\Space q))
-                                             "src-1"))))))
-           (t
-            (llm:make-llm-response
-             :parts (list (llm:make-llm-text-part
-                           :text (or synthesis-text
-                                     (if include-answers-in-synthesis
-                                         (format nil "Cited briefing.~%~{~a~%~}"
-                                                 (mapcar (lambda (qq)
-                                                           (format nil "ANSWER:~a" qq))
-                                                         all-qs))
-                                         "I omit the expected findings."))))))))))))
+  (make-research-mock-llm :questions questions
+                          :gap-once gap-once
+                          :include-answers-in-synthesis include-answers-in-synthesis
+                          :synthesis-text synthesis-text))
 
 (defun %hit-url (query)
   (format nil "https://ex.test/~a" (substitute #\- #\Space (string query))))
@@ -233,6 +161,41 @@
     (ok (= 2 n))
     (ok (llm:llm-response-p r))
     (ok (research-plan-p (llm:llm-response-output r)))))
+
+(deftest mock-tier-research-plan-for-demo
+  "Product mock (CLI / %LLM-FOR) returns a real RESEARCH-PLAN — no #< reader."
+  (let* ((llm (make-research-mock-llm))
+         (r (generate-research-step
+             llm :plan
+             "Decompose this question into a schema-typed research plan with subquestions: CL expert systems"
+             :output 'research-plan))
+         (plan (or (llm:llm-response-output r)
+                   (handler-case
+                       (coerce-research-plan (llm:llm-response-text r)
+                                             :question "CL expert systems")
+                     (error (e)
+                       (ok nil (format nil "reader/coerce failed: ~a" e))
+                       nil)))))
+    (ok (llm:llm-response-p r))
+    (ok (research-plan-p plan))
+    (ok (plusp (length (research-plan-subquestions plan))))
+    (ok (not (search "#<" (or (llm:llm-response-text r) "")))))
+  (let ((resolved (wf::%llm-for (%research-domain) (llm:make-mock-llm-backend))))
+    (ok (llm:mock-llm-handler (bare-llm-backend resolved))
+        "%LLM-FOR replaces a bare mock with the research handler"))
+  (let ((result (run-deep-research
+                 (%research-domain :name "g2-leftover-mock")
+                 "CL expert systems"
+                 :journal (task:make-in-memory-journal)
+                 :task-id "g2-leftover-mock"
+                 :max-rounds 1
+                 :websearch (web:make-mock-websearch-backend))))
+    (ok (consp result))
+    (ok (plusp (length (getf result :children)))
+        "mock-tier run-deep-research produced child answers")
+    (ok (stringp (getf result :markdown)))
+    (ok (not (search "#<" (or (getf result :markdown) "")))
+        "rendered report has no unreadable #< print")))
 
 (deftest deep-research-e2e-mock-llm-websearch
   (let* ((board (bb:make-blackboard))

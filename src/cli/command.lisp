@@ -455,7 +455,7 @@
      (%demo-look-at spec "verdict, child answers, citations, rendered report")
      (let ((got (if (eq (getf spec :llm) :mock)
                     (%call-research domain question
-                                    :llm (llm:make-mock-llm-backend))
+                                    :llm (wf:make-research-mock-llm))
                     (%call-research domain question))))
        (%demo-kv spec "verdict" (or (getf got :verdict) :unknown))
        (%demo-kv spec "child count" (length (getf got :children)))
