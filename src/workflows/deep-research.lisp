@@ -184,10 +184,128 @@
        :candidates (list llm)
        :scope (research-budget-scope run-id))))
 
+(defun %research-mock-turns-text (turns)
+  (cond
+    ((stringp turns) turns)
+    ((listp turns)
+     (with-output-to-string (s)
+       (dolist (tn turns)
+         (write-string (if (stringp tn) tn (or (llm:turn-text tn) "")) s))))
+    (t (princ-to-string turns))))
+
+(defun %research-mock-topic (text)
+  (flet ((after (marker)
+           (let ((pos (search marker text :test #'char-equal)))
+             (when pos
+               (let* ((start (+ pos (length marker)))
+                      (end (or (position-if (lambda (c)
+                                              (member c '(#\. #\Newline #\Return)))
+                                            text :start start)
+                               (length text))))
+                 (string-trim '(#\Space #\Tab) (subseq text start end)))))))
+    (or (after "subquestions: ")
+        (after "Gap analysis for ")
+        (after "cited report for ")
+        "")))
+
+(defun %research-mock-subquestion-line (text)
+  (let ((pos (search "Subquestion: " text)))
+    (when pos
+      (let* ((start (+ pos (length "Subquestion: ")))
+             (end (or (position #\Newline text :start start)
+                      (length text))))
+        (string-trim '(#\Space #\Tab #\Return) (subseq text start end))))))
+
+(defun make-research-mock-llm (&key questions
+                                    gap-once
+                                    (include-answers-in-synthesis t)
+                                    synthesis-text)
+  "Mock LLM that satisfies :OUTPUT RESEARCH-PLAN (demo + %LLM-FOR).
+   Decompose → plan with subquestions; gap analysis → empty or one gap;
+   child → short ANSWER text; else synthesis. QUESTIONS defaults to the
+   topic extracted from the decompose prompt."
+  (let ((gap-remaining (if gap-once 1 0))
+        (gap-q (if (stringp gap-once) gap-once "What is a restart?")))
+    (llm:make-mock-llm-backend
+     :handler
+     (lambda (backend turns &key &allow-other-keys)
+       (declare (ignore backend))
+       (let* ((text (%research-mock-turns-text turns))
+              (qs (or questions
+                      (let ((topic (%research-mock-topic text)))
+                        (if (plusp (length topic))
+                            (list topic)
+                            '("What is the core question?")))))
+              (all-qs (if (and gap-once (stringp gap-once)
+                               (not (member gap-once qs :test #'string-equal)))
+                          (append qs (list gap-once))
+                          qs))
+              (sub (%research-mock-subquestion-line text))
+              (q (or (and sub (find sub all-qs :test #'string-equal))
+                     (find-if (lambda (item) (search item text)) all-qs))))
+         (cond
+           ((search "Gap analysis" text)
+            (if (plusp gap-remaining)
+                (progn
+                  (decf gap-remaining)
+                  (llm:make-llm-response
+                   :parts (list (llm:make-llm-text-part :text "gap"))
+                   :output (make-research-plan
+                            :question "q"
+                            :subquestions
+                            (list (make-research-subquestion
+                                   :id "gap-1" :question gap-q)))))
+                (llm:make-llm-response
+                 :parts (list (llm:make-llm-text-part :text "none"))
+                 :output (make-research-plan :question "q"
+                                            :subquestions nil))))
+           ((search "Decompose" text)
+            (llm:make-llm-response
+             :parts (list (llm:make-llm-text-part :text "plan"))
+             :output (make-research-plan
+                      :question (or (first qs) "q")
+                      :subquestions
+                      (loop for item in qs
+                            for i from 1
+                            collect (make-research-subquestion
+                                     :id (format nil "q~d" i)
+                                     :question item)))))
+           ((or (search "ONE subquestion" text)
+                (search "research child" text)
+                (search "Subquestion:" text))
+            (llm:make-llm-response
+             :parts (list (llm:make-llm-text-part
+                           :text (format nil "ANSWER:~a [~a]"
+                                         (or q "unknown")
+                                         (if q
+                                             (format nil "src-~a"
+                                                     (substitute #\- #\Space q))
+                                             "src-1"))))))
+           (t
+            (llm:make-llm-response
+             :parts (list (llm:make-llm-text-part
+                           :text (or synthesis-text
+                                     (if include-answers-in-synthesis
+                                         (format nil "Cited briefing.~%~{~a~%~}"
+                                                 (mapcar (lambda (item)
+                                                           (format nil "ANSWER:~a" item))
+                                                         all-qs))
+                                         "I omit the expected findings."))))))))))))
+
+(defun %bare-mock-llm-p (llm)
+  (let ((bare (or (ignore-errors (bare-llm-backend llm)) llm)))
+    (and (typep bare 'llm:mock-llm-backend)
+         (null (llm:mock-llm-handler bare)))))
+
 (defun %llm-for (domain llm)
-  (or (resolve-profile-llm (and (expert-domain-p domain) (expert-profile domain))
-                          llm)
-      (llm:make-mock-llm-backend)))
+  "Profile LLM, or MAKE-RESEARCH-MOCK-LLM. A bare mock (no handler) cannot
+   satisfy :OUTPUT RESEARCH-PLAN — replace it so demo / cmd-research work."
+  (let ((resolved (resolve-profile-llm
+                   (and (expert-domain-p domain) (expert-profile domain))
+                   llm)))
+    (if (or (null resolved) (%bare-mock-llm-p resolved))
+        (make-research-mock-llm)
+        resolved)))
 
 (defun %websearch-for (websearch)
   (or websearch web:*websearch-backend* (web:make-mock-websearch-backend)))

@@ -428,12 +428,13 @@ issuer = \"https://file.example\"
             "missing iat rejected"))
       (let* ((tampered (copy-seq good))
              (dot (position #\. tampered :from-end t)))
-        (setf (char tampered (1- (length tampered)))
-              (if (char= (char tampered (1- (length tampered))) #\A)
-                  #\B #\A))
+        ;; Flip the first signature char — last-char A↔B can be a no-op
+        ;; under base64url padding and still verify on some platforms.
+        (ok (and dot (< (1+ dot) (length tampered))))
+        (setf (char tampered (1+ dot))
+              (if (char= (char tampered (1+ dot)) #\A) #\B #\A))
         (ok (null (decode-session-cookie profile tampered))
-            "tampered signature rejected")
-        (ok (numberp dot))))))
+            "tampered signature rejected")))))
 
 (deftest corporate-session-kid-rotation-and-secure-cookie
   "H7 gate 5: previous kid accepted; Secure policy is explicit."
