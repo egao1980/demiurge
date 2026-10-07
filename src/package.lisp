@@ -20,7 +20,10 @@
                     (#:cfg #:cl-stack-config)
                     (#:oauth2 #:cl-stack-oauth2)
                     (#:jwt #:cl-stack-jwt)
-                    (#:ldap #:ldap-protocol))
+                    (#:ldap #:ldap-protocol)
+                    (#:dec #:decision-protocol)
+                    (#:mem #:memory-protocol)
+                    (#:dt #:datetime-protocol))
   (:export
    #:demiurge-error
    #:demiurge-error-message
@@ -161,10 +164,32 @@
    #:agent-ks-catalogue
    #:agent-ks-mcp-peer
    #:agent-ks-durability
+   #:agent-ks-chronicle
+   #:*chronicle-store*
+   #:turn-to-memory-record
+   #:chronicle-turns
+   #:inject-memory-state
    #:ks-watch-keys
    #:catalogue-function-tools
    #:collect-agent-ks-tools
    #:*trial-restricted-catalogue*
+
+   #:decision-ks
+   #:decision-ks-p
+   #:make-decision-ks
+   #:decision-ks-backend
+   #:decision-ks-watch
+   #:decision-ks-questions
+   #:decision-ks-questions-fn
+   #:decision-ks-model
+   #:decision-ks-result-key
+   #:decision-ks-answer-key-fn
+   #:serialize-decision-state
+   #:decision-answer-section-key
+   #:make-decision-record
+   #:decision-record-mass
+   #:decision-record-model
+   #:make-decision-section-lookup
 
    #:expert-controller
    #:expert-controller-p
@@ -178,6 +203,9 @@
 
    #:make-echo-expert
    #:echo-expert
+   #:make-decision-expert
+   #:decision-expert
+   #:run-decision-demo
    #:make-cl-dev-expert
    #:make-cl-dev-catalogue
    #:cl-dev-expert

@@ -53,7 +53,11 @@ Cursor / Claude snippet: `examples/cursor-mcp.json`. Tools: `ask_expert`, `searc
 
 **CLI** (`demiurge/cli`): `serve` / `ask` / `research` / `ingest` / `improve` / `install` / `demo` parse flags, `(load-expert-config path :register t)`, and call the matching GF. `demo <dir>` reads `demo.toml` (`expert`/`config`, `queries`, `command`, `llm`/`websearch` = `auto|live|mock`, `narration`, optional `websearch-fixtures`) and `queries.md` (`ask:` / `research:` / `improve:` / `ingest:` prefixes, `#` comments). Binary: `(asdf:make "demiurge/cli")` (`program-op` → `./demiurge`). Fallback without a dumped image: `ros -l scripts/demiurge.lisp -- ask --config examples/cl-dev-expert.toml "question"` (or `sbcl --load scripts/demiurge.lisp`).
 
-**Reference experts:** `make-echo-expert` (minimal) and `make-cl-dev-expert` (lookup-symbol / search-corpus / `:compute`-gated run-tests, steering skills, docs corpus, ~20 eval cases). Golden config: `examples/cl-dev-expert.toml`.
+**Reference experts:** `make-echo-expert` (minimal), `make-decision-expert` (typed question batch → full-mass `:decision/<id>` sections via `decision-ks`; no `run-ai-agent`), and `make-cl-dev-expert` (lookup-symbol / search-corpus / `:compute`-gated run-tests, steering skills, docs corpus, ~20 eval cases). Golden config: `examples/cl-dev-expert.toml`.
+
+**Chronicle:** optional `memory-protocol` store on `agent-ks` (`:chronicle` / `*chronicle-store*` / `memory-protocol:*memory-store*`). Appends verbatim turns keyed by expert name + request session + tenant and prepends `render-state` as a `:system` turn. `conversation-protocol` remains the prompt window.
+
+**Decision-plane demos** (mock / fixture, no sidecar): `sbcl --load scripts/run-decision-demos.lisp`. Live: `DECISION_LIVE=1` plus a sidecar on `http://127.0.0.1:8009`.
 
 ## License
 
