@@ -5,3 +5,6 @@
 .DS_Store
 .cl-repository/
 /demiurge
+
+# cl-repository client lock (local tool state)
+cl-repo.lock
