@@ -30,6 +30,9 @@
                     (#:http.p #:http-protocol)
                     (#:http.async #:http-backend-async)
                     (#:pathlib #:cl-stack-pathlib)
-                    (#:bt #:bordeaux-threads)))
+                    (#:bt #:bordeaux-threads)
+                    (#:dec #:decision-protocol)
+                    (#:mem #:memory-protocol)
+                    (#:dt #:datetime-protocol)))
 
 (in-package #:demiurge/tests)

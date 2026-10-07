@@ -11,7 +11,8 @@
    (steering :initarg :steering :accessor agent-ks-steering :initform nil)
    (catalogue :initarg :catalogue :accessor agent-ks-catalogue :initform nil)
    (mcp-peer :initarg :mcp-peer :accessor agent-ks-mcp-peer :initform nil)
-   (durability :initarg :durability :accessor agent-ks-durability :initform nil)))
+   (durability :initarg :durability :accessor agent-ks-durability :initform nil)
+   (chronicle :initarg :chronicle :accessor agent-ks-chronicle :initform nil)))
 
 (defun agent-ks-p (x)
   (typep x 'agent-ks))
@@ -19,6 +20,7 @@
 (defun make-agent-ks (&key name agent (watch '(:prompt))
                         (prompt-key :prompt) (result-key :result)
                         memory steering catalogue mcp-peer durability
+                        chronicle
                         (priority 0) (version "0.1.0"))
   (check-type agent agent:ai-agent)
   (make-instance 'agent-ks
@@ -32,6 +34,7 @@
                  :catalogue catalogue
                  :mcp-peer mcp-peer
                  :durability durability
+                 :chronicle chronicle
                  :priority priority
                  :version version))
 
@@ -105,6 +108,60 @@
       (event:with-event-backend (eb)
         (event:with-event-loop-var (el)
           (funcall thunk))))))
+
+(defun %chronicle-store (ks)
+  (or (and ks (agent-ks-chronicle ks))
+      *chronicle-store*
+      (let ((s (find-symbol "*MEMORY-STORE*" :memory-protocol)))
+        (and s (boundp s) (symbol-value s)))))
+
+(defun %ks-name-string (ks)
+  "Symbols downcase (memory-protocol identity match is STRING=)."
+  (let ((name (bb:ks-name ks)))
+    (etypecase name
+      (string name)
+      (symbol (string-downcase (symbol-name name))))))
+
+(defun %chronicle-identity (ks blackboard)
+  (let ((domain (%domain-for-board blackboard)))
+    (or (and domain (expert-name domain))
+        (and ks (%ks-name-string ks))
+        "default")))
+
+(defun %chronicle-session (ks session)
+  "Chronicle session: the request session (H6 isolation) when bound,
+   otherwise the KS name so a bare board still gets a stable key."
+  (cond
+    ((and session (plusp (length (string session)))) (string session))
+    (ks (%ks-name-string ks))
+    (t "default")))
+
+(defun %prepare-prompt-with-memory (ks blackboard prompt session)
+  (let ((store (%chronicle-store ks)))
+    (if (null store)
+        prompt
+        (let ((identity (%chronicle-identity ks blackboard))
+              (tenant (%chronicle-tenant)))
+          (chronicle-turns store prompt
+                           :identity identity
+                           :tenant tenant
+                           :session (%chronicle-session ks session))
+          (inject-memory-state store prompt
+                               :identity identity
+                               :tenant tenant)))))
+
+(defun %chronicle-run (ks blackboard run session)
+  (let ((store (%chronicle-store ks)))
+    (when (and store run (agent:agent-run-p run))
+      (let* ((identity (%chronicle-identity ks blackboard))
+             (tenant (%chronicle-tenant))
+             (text (agent:agent-run-text run)))
+        (when (and text (plusp (length text)))
+          (chronicle-turns store (list (llm:assistant-turn text))
+                           :identity identity
+                           :tenant tenant
+                           :session (%chronicle-session ks session)
+                           :actor identity))))))
 
 (defun %session-window-turns ()
   (demiurge-config-session-window-turns (current-demiurge-config)))
@@ -184,12 +241,14 @@
                  :mcp-peer (agent-ks-mcp-peer ks))))
     (%ensure-agent-memory ks agent)
     (let* ((session (current-request-session-key))
+           (agent-prompt (%prepare-prompt-with-memory ks blackboard prompt session))
            (run (call-with-event-loop
                  (lambda ()
-                   (%run-ai-agent agent prompt
+                   (%run-ai-agent agent agent-prompt
                                   :tools tools
                                   :session session
                                   :durability (agent-ks-durability ks))))))
+      (%chronicle-run ks blackboard run session)
       (%record-session-exchange ks prompt run session)
       (bb:write-section blackboard
                        (agent-ks-result-key ks)

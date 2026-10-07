@@ -1,5 +1,5 @@
 (defsystem "demiurge"
-  :version "0.4.1"
+  :version "0.4.2"
   :description "Self-improving expert-system core for cl-stack (defexpert + agent-ks + controller)"
   :author "egao1980"
   :license "MIT"
@@ -27,7 +27,10 @@
                "cl-stack-config"
                "cl-stack-oauth2"
                "cl-stack-jwt"
-               "ldap-protocol")
+               "ldap-protocol"
+               "decision-protocol"
+               (:version "memory-protocol" "0.1.1")
+               (:version "datetime-protocol" "0.1.3"))
   :properties (:cl-repo
                (:provides ("demiurge"
                            "demiurge/improve"
@@ -57,14 +60,17 @@
                (:file "profile-corporate")
                (:file "domain")
                (:file "tools")
+               (:file "memory")
                (:file "agent-ks")
+               (:file "decision-ks")
                (:file "controller")
                (:file "echo-expert" :pathname "../examples/echo-expert")
+               (:file "decision-expert" :pathname "../examples/decision-expert")
                (:file "cl-dev-expert" :pathname "../examples/cl-dev-expert"))
   :in-order-to ((test-op (test-op "demiurge/tests"))))
 
 (defsystem "demiurge/improve"
-  :version "0.4.1"
+  :version "0.4.2"
   :description "Self-improvement cycle for demiurge (versioned-ks + eval gates)"
   :author "egao1980"
   :license "MIT"
@@ -80,7 +86,7 @@
                (:file "cycle")))
 
 (defsystem "demiurge/observe"
-  :version "0.4.1"
+  :version "0.4.2"
   :description "Observability subsystem: span/metric taxonomy, health, profiles"
   :author "egao1980"
   :license "MIT"
@@ -95,7 +101,7 @@
                (:file "profiles")))
 
 (defsystem "demiurge/serve"
-  :version "0.4.1"
+  :version "0.4.2"
   :description "Serve an expert-domain over MCP / A2A / AG-UI"
   :author "egao1980"
   :license "MIT"
@@ -120,7 +126,7 @@
                (:file "app")))
 
 (defsystem "demiurge/ingest"
-  :version "0.4.1"
+  :version "0.4.2"
   :description "Durable corpus ingest for demiurge (file / IMAP / object-store)"
   :author "egao1980"
   :license "MIT"
@@ -140,7 +146,7 @@
                (:file "pipeline")))
 
 (defsystem "demiurge/workflows"
-  :version "0.4.1"
+  :version "0.4.2"
   :description "Durable project workflows and deep-research fan-out"
   :author "egao1980"
   :license "MIT"
@@ -167,7 +173,7 @@
                (:file "deep-research")))
 
 (defsystem "demiurge/bundle"
-  :version "0.4.1"
+  :version "0.4.2"
   :description "Expert-bundle packaging and distribution (OCI layout + install)"
   :author "egao1980"
   :license "MIT"
@@ -195,7 +201,7 @@
                (:file "expert-config")))
 
 (defsystem "demiurge/cli"
-  :version "0.4.1"
+  :version "0.4.2"
   :description "demiurge command-line entrypoint (cli-protocol + clingon)"
   :author "egao1980"
   :license "MIT"
@@ -246,7 +252,10 @@
                (:file "bundle-test")
                (:file "expert-config-test")
                (:file "cli-test")
-               (:file "corporate-test"))
+               (:file "corporate-test")
+               (:file "decision-ks-test")
+               (:file "decision-demo-test")
+               (:file "memory-test"))
   :perform (test-op (o c)
              (unless (symbol-call :rove :run c)
                (error "tests failed for ~A" (component-name c)))))
